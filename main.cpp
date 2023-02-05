@@ -6,6 +6,8 @@
 #include <boost/asio.hpp>
 #include "digitalcurling3/digitalcurling3.hpp"
 
+#include <torch/script.h>
+
 namespace dc = digitalcurling3;
 
 namespace {
@@ -45,6 +47,17 @@ void OnInit(
 {
     // TODO AIを作る際はここを編集してください
     g_team = team;
+
+    torch::jit::script::Module module;
+    // Deserialize the ScriptModule from a file using torch::jit::load().
+    try {
+        // Deserialize the ScriptModule from a file using torch::jit::load().
+        module = torch::jit::load("../model/traced_curling_cnn.pt");
+    }
+    catch (const c10::Error& e) {
+        std::cerr << "error loading the model\n";
+    }
+
 }
 
 
@@ -58,6 +71,7 @@ void OnInit(
 dc::Move OnMyTurn(dc::GameState const& game_state)
 {
     // TODO AIを作る際はここを編集してください
+    dc::GameState current_game_state = game_state;
 
     dc::moves::Shot shot;
 

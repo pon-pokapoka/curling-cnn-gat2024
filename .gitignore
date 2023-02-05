@@ -20,3 +20,6 @@ _deps
 
 # VSCode
 /.vscode/
+
+# model
+/model/traced_curling_cnn.pt

@@ -31,6 +31,7 @@ find_package(Boost 1.75 REQUIRED COMPONENTS date_time regex)
 
 # Threadsライブラリを読み込みます
 find_package(Threads REQUIRED)
+find_package(Torch REQUIRED)
 
 
 
@@ -51,4 +52,6 @@ target_link_libraries(digitalcurling3_simple_client  # add_executable() で実�
     Boost::date_time
     Boost::regex
     Threads::Threads
+    "${TORCH_LIBRARIES}"
 )
+
