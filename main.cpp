@@ -14,6 +14,53 @@ namespace {
 
 
 dc::Team g_team;  // 自身のチームID
+torch::jit::script::Module module;
+dc::GameSetting g_game_setting;
+std::unique_ptr<dc::ISimulator> g_simulator;
+std::unique_ptr<dc::ISimulatorStorage> g_simulator_storage;
+std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
+
+
+std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
+{
+    std::vector<torch::jit::IValue> inputs;
+
+    torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), 2, 39*12+12, 12*15+7}).to("cuda");
+    torch::Tensor end = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
+    torch::Tensor score = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
+    torch::Tensor stone = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
+
+    for (size_t k; k < game_states.size(); ++k){
+        int i = static_cast<int>(k);
+        stone.index({i}) = (game_states[i].kShotPerEnd - game_states[i].shot) / 16.f;
+        score.index({i}) = (game_states[i].GetTotalScore(game_states[i].hammer) - game_states[i].GetTotalScore(dc::GetOpponentTeam(game_states[i].hammer))) * 0.1f + 0.5f;
+        if (game_states[i].end < game_setting.max_end){
+            end.index({i}) = (game_setting.max_end - game_states[i].end) / 10.f;
+        } else {
+            end.index({i}) = 0.1f;
+        }
+        for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
+            auto const& stone = game_states[i].stones[static_cast<size_t>(dc::GetOpponentTeam(game_states[i].hammer))][team_stone_idx];
+            if (stone) {
+                // sheet.index({i, 0, (stone->position)}) = 1;
+            }
+        }
+        for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
+            auto const& stone = game_states[i].stones[static_cast<size_t>(game_states[i].hammer)][team_stone_idx];
+            if (stone) {
+                // sheet.index({i, 1, (stone->position)}) = 1;
+            }
+        }
+    }
+
+    inputs.push_back(sheet);
+    inputs.push_back(end);
+    inputs.push_back(score);
+    inputs.push_back(stone);
+
+    return inputs;
+}
+
 
 
 /// \brief サーバーから送られてきた試合設定が引数として渡されるので，試合前の準備を行います．
@@ -48,7 +95,6 @@ void OnInit(
     // TODO AIを作る際はここを編集してください
     g_team = team;
 
-    torch::jit::script::Module module;
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
@@ -73,14 +119,45 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
     // TODO AIを作る際はここを編集してください
     dc::GameState current_game_state = game_state;
 
-    dc::moves::Shot shot;
+    // Create a vector of inputs.
+    auto outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
 
+
+    // for (unsigned i = 0; i < 50; ++i) {
+    //     std::vector<torch::jit::IValue> input;
+    //     input.push_back(torch::zeros({4, 2, 39*12+12, 12*15+7}).to("cuda"));
+    //     input.push_back(torch::zeros({4, 1}).to("cuda"));
+    //     input.push_back(torch::zeros({4, 1}).to("cuda"));
+    //     input.push_back(torch::zeros({4, 1}).to("cuda"));
+
+    //     // Execute the model and turn its output into a tensor.
+    //     auto outputs = module.forward(input).toTuple();
+    //     torch::Tensor out1 = outputs->elements()[0].toTensor().reshape({4, 2, 100, 12*15+7});
+    //     torch::Tensor out2 = outputs->elements()[1].toTensor(); 
+    //     torch::Tensor out3 = outputs->elements()[2].toTensor(); 
+    // }
+
+    dc::moves::Shot shot;
     // ショットの初速
     shot.velocity.x = 0.132f;
     shot.velocity.y = 2.3995f;
 
     // ショットの回転
     shot.rotation = dc::moves::Shot::Rotation::kCCW; // 反時計回り
+
+    // dc::Move temp_move = shot;
+
+    // auto & current_player = *g_players[game_state.shot / 4];
+
+    // for (unsigned i = 0; i < 50; ++i) {
+    //     dc::GameState temp_game_state = game_state;
+    //     g_simulator->Load(*g_simulator_storage);
+
+    //     dc::ApplyMove(g_game_setting, *g_simulator,
+    //         current_player, temp_game_state, temp_move, std::chrono::milliseconds(0));
+    // }
+
+
     // shot.rotation = dc::moves::Shot::Rotation::kCW; // 時計回り
 
     return shot;
