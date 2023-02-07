@@ -36,7 +36,7 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
 {
     std::vector<torch::jit::IValue> inputs;
 
-    torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), 2, 39*12+12, 12*15+7}).to("cuda");
+    torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), 2, 27*12+12, 12*15+7}).to("cuda");
     torch::Tensor end = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
     torch::Tensor score = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
     torch::Tensor stone = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
@@ -137,7 +137,7 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
     // for (unsigned i = 0; i < 50; ++i) {
     //     std::vector<torch::jit::IValue> input;
-    //     input.push_back(torch::zeros({4, 2, 39*12+12, 12*15+7}).to("cuda"));
+    //     input.push_back(torch::zeros({4, 2, 27*12+12, 12*15+7}).to("cuda"));
     //     input.push_back(torch::zeros({4, 1}).to("cuda"));
     //     input.push_back(torch::zeros({4, 1}).to("cuda"));
     //     input.push_back(torch::zeros({4, 1}).to("cuda"));
