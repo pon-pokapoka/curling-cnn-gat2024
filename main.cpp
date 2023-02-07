@@ -21,6 +21,17 @@ std::unique_ptr<dc::ISimulatorStorage> g_simulator_storage;
 std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
 
 
+std::pair<int, int> PositionToPixel(dc::Vector2 position)
+{
+    std::pair<int, int> pixel;
+
+    pixel.first = (int)round((position.y - 32.004)/0.0254);
+    pixel.second = 93 - (int)round(position.x/0.0254);
+
+    return pixel;
+}
+
+
 std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
 {
     std::vector<torch::jit::IValue> inputs;
@@ -42,13 +53,15 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
         for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
             auto const& stone = game_states[i].stones[static_cast<size_t>(dc::GetOpponentTeam(game_states[i].hammer))][team_stone_idx];
             if (stone) {
-                // sheet.index({i, 0, (stone->position)}) = 1;
+                std::pair <int, int> pixel = PositionToPixel(stone->position);
+                sheet.index({i, 0, pixel.first, pixel.second}) = 1;
             }
         }
         for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
             auto const& stone = game_states[i].stones[static_cast<size_t>(game_states[i].hammer)][team_stone_idx];
             if (stone) {
-                // sheet.index({i, 1, (stone->position)}) = 1;
+                std::pair <int, int> pixel = PositionToPixel(stone->position);
+                sheet.index({i, 1, pixel.first, pixel.second}) = 1;
             }
         }
     }
@@ -60,7 +73,6 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
 
     return inputs;
 }
-
 
 
 /// \brief サーバーから送られてきた試合設定が引数として渡されるので，試合前の準備を行います．
