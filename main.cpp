@@ -17,6 +17,7 @@ dc::Team g_team;  // 自身のチームID
 torch::jit::script::Module module;
 dc::GameSetting g_game_setting;
 std::unique_ptr<dc::ISimulator> g_simulator;
+std::array<std::unique_ptr<dc::ISimulator>, 100> g_simulators;
 std::unique_ptr<dc::ISimulatorStorage> g_simulator_storage;
 std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
 
@@ -116,6 +117,48 @@ void OnInit(
         std::cerr << "error loading the model\n";
     }
 
+
+    // for (unsigned i = 0; i < 100; ++i) {
+    //     std::vector<torch::jit::IValue> input;
+    //     input.push_back(torch::rand({4, 2, 27*12+12, 12*15+7}).to("cuda"));
+    //     input.push_back(torch::rand({4, 1}).to("cuda"));
+    //     input.push_back(torch::rand({4, 1}).to("cuda"));
+    //     input.push_back(torch::rand({4, 1}).to("cuda"));
+
+    //     // Execute the model and turn its output into a tensor.
+    //     auto outputs = module.forward(input).toTuple();
+    //     torch::Tensor out1 = outputs->elements()[0].toTensor().reshape({4, 2, 100, 12*15+7});
+    //     torch::Tensor out2 = outputs->elements()[1].toTensor(); 
+    //     torch::Tensor out3 = outputs->elements()[2].toTensor(); 
+    // }
+
+    // 非対応の場合は シミュレータFCV1を使用する．
+    g_team = team;
+    g_game_setting = game_setting;
+    if (simulator_factory) {
+        g_simulator = simulator_factory->CreateSimulator();
+        for (unsigned i = 0; i < 100; ++i) {
+            g_simulators[i] = simulator_factory->CreateSimulator();
+        }
+    } else {
+        g_simulator = dc::simulators::SimulatorFCV1Factory().CreateSimulator();
+        for (unsigned i = 0; i < 100; ++i) {
+            g_simulators[i] = dc::simulators::SimulatorFCV1Factory().CreateSimulator();
+        }
+    }
+    g_simulator_storage = g_simulator->CreateStorage();
+
+    // プレイヤーを生成する
+    // 非対応の場合は NormalDistプレイヤーを使用する．
+    assert(g_players.size() == player_factories.size());
+    for (size_t i = 0; i < g_players.size(); ++i) {
+        auto const& player_factory = player_factories[player_order[i]];
+        if (player_factory) {
+            g_players[i] = player_factory->CreatePlayer();
+        } else {
+            g_players[i] = dc::players::PlayerNormalDistFactory().CreatePlayer();
+        }
+    }
 }
 
 
@@ -135,39 +178,35 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
     auto outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
 
 
-    // for (unsigned i = 0; i < 50; ++i) {
-    //     std::vector<torch::jit::IValue> input;
-    //     input.push_back(torch::zeros({4, 2, 27*12+12, 12*15+7}).to("cuda"));
-    //     input.push_back(torch::zeros({4, 1}).to("cuda"));
-    //     input.push_back(torch::zeros({4, 1}).to("cuda"));
-    //     input.push_back(torch::zeros({4, 1}).to("cuda"));
-
-    //     // Execute the model and turn its output into a tensor.
-    //     auto outputs = module.forward(input).toTuple();
-    //     torch::Tensor out1 = outputs->elements()[0].toTensor().reshape({4, 2, 100, 12*15+7});
-    //     torch::Tensor out2 = outputs->elements()[1].toTensor(); 
-    //     torch::Tensor out3 = outputs->elements()[2].toTensor(); 
-    // }
 
     dc::moves::Shot shot;
-    // ショットの初速
-    shot.velocity.x = 0.132f;
-    shot.velocity.y = 2.3995f;
+    dc::Vector2 velocity = dc::Vector2(0.132f, 2.3995f);
 
-    // ショットの回転
-    shot.rotation = dc::moves::Shot::Rotation::kCCW; // 反時計回り
+    shot = {velocity, dc::moves::Shot::Rotation::kCCW};
 
-    // dc::Move temp_move = shot;
+    // std::array<dc::moves::Shot, 2> const candidate_shots{{
+    //     { velocity, dc::moves::Shot::Rotation::kCCW },
+    //     { velocity, dc::moves::Shot::Rotation::kCW },
+    // }};
 
-    // auto & current_player = *g_players[game_state.shot / 4];
+    auto & current_player = *g_players[game_state.shot / 4];
 
-    // for (unsigned i = 0; i < 50; ++i) {
-    //     dc::GameState temp_game_state = game_state;
-    //     g_simulator->Load(*g_simulator_storage);
+    g_simulator->Save(*g_simulator_storage);
 
-    //     dc::ApplyMove(g_game_setting, *g_simulator,
-    //         current_player, temp_game_state, temp_move, std::chrono::milliseconds(0));
-    // }
+    std::array<dc::GameState, 100> temp_game_states;
+    std::array<dc::Move, 100> temp_moves;
+
+    #pragma omp parallel for
+    for (unsigned i = 0; i < 100; ++i) {
+        temp_game_states[i] = game_state;
+        temp_moves[i] = shot;
+        g_simulators[i]->Load(*g_simulator_storage);
+
+        dc::ApplyMove(g_game_setting, *g_simulators[i],
+            current_player, temp_game_states[i], temp_moves[i], std::chrono::milliseconds(0));
+
+        // auto outputs = module.forward(GameStateToInput({temp_game_state}, g_game_setting)).toTuple();
+    }
 
 
     // shot.rotation = dc::moves::Shot::Rotation::kCW; // 時計回り
@@ -189,6 +228,10 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 void OnOpponentTurn(dc::GameState const& game_state)
 {
     // TODO AIを作る際はここを編集してください
+    dc::GameState current_game_state = game_state;
+
+    // Create a vector of inputs.
+    auto outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
 }
 
 
@@ -290,6 +333,7 @@ int main(int argc, char const * argv[])
             std::cout << "  name: " << kName << std::endl;
         }
 
+        // dc::GameState game_state;
 
         // [in] is_ready
         {
