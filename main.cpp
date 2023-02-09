@@ -33,6 +33,17 @@ std::pair<int, int> PositionToPixel(dc::Vector2 position)
 }
 
 
+dc::Vector2 PixelToVelocity(int i, int j)
+{
+    std::array<float, 50> velocity_array{{2.21, 2.22, 2.23, 2.24, 2.25, 2.26, 2.27, 2.28, 2.29, 2.3 ,
+        2.31, 2.32, 2.33, 2.34 , 2.345, 2.35 , 2.355, 2.36 , 2.365, 2.37 , 2.375, 2.38 ,
+        2.385, 2.39 , 2.395, 2.4  , 2.405, 2.41 , 2.415, 2.42 , 2.425,
+        2.43 , 2.435, 2.44 , 2.445, 2.45 , 2.455, 2.46, 2.485, 2.51, 2.535, 2.56, 2.6, 2.8, 3. , 3.2, 3.4, 3.6, 3.8, 4.}};
+
+    return dc::Vector2(velocity_array[i] * std::sin(std::atan(-(j - 93) * 0.0254 / 38.405)), velocity_array[i] * std::cos(std::atan(-(j - 93) * 0.0254 / 38.405)));
+}
+
+
 std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
 {
     std::vector<torch::jit::IValue> inputs;
@@ -127,7 +138,7 @@ void OnInit(
 
     //     // Execute the model and turn its output into a tensor.
     //     auto outputs = module.forward(input).toTuple();
-    //     torch::Tensor out1 = outputs->elements()[0].toTensor().reshape({4, 2, 100, 12*15+7});
+    //     torch::Tensor out1 = outputs->elements()[0].toTensor().reshape({4, 2, 50, 12*15+7});
     //     torch::Tensor out2 = outputs->elements()[1].toTensor(); 
     //     torch::Tensor out3 = outputs->elements()[2].toTensor(); 
     // }
@@ -177,17 +188,21 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
     // Create a vector of inputs.
     auto outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
 
+    auto policy = outputs->elements()[0].toTensor().reshape({1, 2, 50, 12*15+7}).to(torch::kCPU);
+
+    // int idx = torch::argmax(policy[0]).item().to<int>();
+    int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
+
+    std::cout << idx << std::endl;
 
 
     dc::moves::Shot shot;
-    dc::Vector2 velocity = dc::Vector2(0.132f, 2.3995f);
+    dc::Vector2 velocity = PixelToVelocity(idx % (50 * (12*15+7)) / (12*15+7), idx % (50 * (12*15+7)) % (12*15+7));
 
-    shot = {velocity, dc::moves::Shot::Rotation::kCCW};
+    if (idx / (50 * (12*15+7)) == 0) shot = {velocity, dc::moves::Shot::Rotation::kCW};
+    else if (idx / (50 * (12*15+7)) == 1) shot = {velocity, dc::moves::Shot::Rotation::kCCW};
+    else std::cerr << "shot error!";
 
-    // std::array<dc::moves::Shot, 2> const candidate_shots{{
-    //     { velocity, dc::moves::Shot::Rotation::kCCW },
-    //     { velocity, dc::moves::Shot::Rotation::kCW },
-    // }};
 
     auto & current_player = *g_players[game_state.shot / 4];
 
