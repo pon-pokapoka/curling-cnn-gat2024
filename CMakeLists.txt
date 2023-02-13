@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.19)
 # プロジェクトを定義します．
 # プロジェクトはVisual Studioではソリューションに相当します．
 # プロジェクトの中には複数の実行ファイルやライブラリを定義できます．
-project(digitalcurling3_simple_client  # プロジェクト名．Visual Studioではソリューション名になります．
+project(digitalcurling3_cnn  # プロジェクト名．Visual Studioではソリューション名になります．
     VERSION 0.1.0
     LANGUAGES CXX
 )
@@ -40,7 +40,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 
 
 # 実行ファイルを定義します
-add_executable(digitalcurling3_simple_client  # 実行ファイルの名前はここの名前になります．なおプロジェクト名と一致させる必要はありません．
+add_executable(digitalcurling3_cnn  # 実行ファイルの名前はここの名前になります．なおプロジェクト名と一致させる必要はありません．
     main.cpp
     # ソースファイルやヘッダーファイルを追加する場合，ファイルを作成した後にファイル名をここに列挙します．
     # example.hpp
@@ -49,7 +49,7 @@ add_executable(digitalcurling3_simple_client  # 実行ファイルの名前は�
 
 # リンクするライブラリを指定します
 # インクルードディレクトリとリンクするライブラリファイルが設定されます
-target_link_libraries(digitalcurling3_simple_client  # add_executable() で実行ファイル名を変更した場合，同様にここも変更する必要があります．
+target_link_libraries(digitalcurling3_cnn  # add_executable() で実行ファイル名を変更した場合，同様にここも変更する必要があります．
   PRIVATE
     digitalcurling3::digitalcurling3
     Boost::headers

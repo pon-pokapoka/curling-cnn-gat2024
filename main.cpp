@@ -7,8 +7,17 @@
 #include "digitalcurling3/digitalcurling3.hpp"
 
 #include <torch/script.h>
+#include <torch/csrc/api/include/torch/nn/functional/activation.h>
+#include <c10/cuda/CUDACachingAllocator.h>
+
 
 namespace dc = digitalcurling3;
+namespace F = torch::nn::functional;
+
+const int nSimulation = 1;
+const int nBatchSize = 50;
+const int nCandidate = 500;
+
 
 namespace {
 
@@ -17,9 +26,13 @@ dc::Team g_team;  // 自身のチームID
 torch::jit::script::Module module;
 dc::GameSetting g_game_setting;
 std::unique_ptr<dc::ISimulator> g_simulator;
-std::array<std::unique_ptr<dc::ISimulator>, 100> g_simulators;
+std::array<std::unique_ptr<dc::ISimulator>, nCandidate> g_simulators;
 std::unique_ptr<dc::ISimulatorStorage> g_simulator_storage;
 std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
+
+std::chrono::duration<double> limit;
+
+torch::Device device(torch::kCUDA);
 
 
 std::pair<int, int> PositionToPixel(dc::Vector2 position)
@@ -48,10 +61,10 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
 {
     std::vector<torch::jit::IValue> inputs;
 
-    torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), 2, 27*12+12, 12*15+7}).to("cuda");
-    torch::Tensor end = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
-    torch::Tensor score = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
-    torch::Tensor stone = torch::zeros({static_cast<int>(game_states.size()), 1}).to("cuda");
+    torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), 2, 27*12+12, 12*15+7}).to(device);
+    torch::Tensor end = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
+    torch::Tensor score = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
+    torch::Tensor stone = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
 
     for (size_t k; k < game_states.size(); ++k){
         int i = static_cast<int>(k);
@@ -119,29 +132,32 @@ void OnInit(
     // TODO AIを作る際はここを編集してください
     g_team = team;
 
+    torch::NoGradGuard no_grad; 
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("../model/traced_curling_cnn.pt");
+        module = torch::jit::load("../model/traced_curling_cnn_gen000-e001.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
     }
 
 
-    // for (unsigned i = 0; i < 100; ++i) {
-    //     std::vector<torch::jit::IValue> input;
-    //     input.push_back(torch::rand({4, 2, 27*12+12, 12*15+7}).to("cuda"));
-    //     input.push_back(torch::rand({4, 1}).to("cuda"));
-    //     input.push_back(torch::rand({4, 1}).to("cuda"));
-    //     input.push_back(torch::rand({4, 1}).to("cuda"));
+    for (unsigned i = 0; i < 1; ++i) {
+        std::vector<torch::jit::IValue> inputs;
+        inputs.push_back(torch::rand({50, 2, 27*12+12, 12*15+7}).to(device));
+        inputs.push_back(torch::rand({50, 1}).to(device));
+        inputs.push_back(torch::rand({50, 1}).to(device));
+        inputs.push_back(torch::rand({50, 1}).to(device));
 
-    //     // Execute the model and turn its output into a tensor.
-    //     auto outputs = module.forward(input).toTuple();
-    //     torch::Tensor out1 = outputs->elements()[0].toTensor().reshape({4, 2, 50, 12*15+7});
-    //     torch::Tensor out2 = outputs->elements()[1].toTensor(); 
-    //     torch::Tensor out3 = outputs->elements()[2].toTensor(); 
-    // }
+        // Execute the model and turn its output into a tensor.
+        auto outputs = module.forward(inputs).toTuple();
+        torch::Tensor out1 = outputs->elements()[0].toTensor().to(torch::kCPU);
+        torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
+        torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
+
+    }
+    c10::cuda::CUDACachingAllocator::emptyCache();
 
     // 非対応の場合は シミュレータFCV1を使用する．
     g_team = team;
@@ -170,6 +186,8 @@ void OnInit(
             g_players[i] = dc::players::PlayerNormalDistFactory().CreatePlayer();
         }
     }
+
+    limit = g_game_setting.thinking_time[0] * 0.8 / 80.;
 }
 
 
@@ -183,50 +201,80 @@ void OnInit(
 dc::Move OnMyTurn(dc::GameState const& game_state)
 {
     // TODO AIを作る際はここを編集してください
+    auto start = std::chrono::system_clock::now();
+
     dc::GameState current_game_state = game_state;
+    torch::NoGradGuard no_grad; 
 
     // Create a vector of inputs.
-    auto outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
+    auto current_outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
 
-    auto policy = outputs->elements()[0].toTensor().reshape({1, 2, 50, 12*15+7}).to(torch::kCPU);
+    auto policy = F::softmax(current_outputs->elements()[0].toTensor().reshape({1, 18700}).to(torch::kCPU), 1);
 
     // int idx = torch::argmax(policy[0]).item().to<int>();
-    int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
+    // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
+    // auto indices = std::get<1>(torch::topk(policy * torch::rand({18700}), 100));
+    auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}), nCandidate));
+    std::array<int, nCandidate> indices_copy;
 
-    std::cout << idx << std::endl;
+    // std::cout << idx << std::endl;
 
 
-    dc::moves::Shot shot;
-    dc::Vector2 velocity = PixelToVelocity(idx % (50 * (12*15+7)) / (12*15+7), idx % (50 * (12*15+7)) % (12*15+7));
+    std::array<dc::moves::Shot, nCandidate> shots;
+    std::array<dc::Vector2, nCandidate> velocity;
 
-    if (idx / (50 * (12*15+7)) == 0) shot = {velocity, dc::moves::Shot::Rotation::kCW};
-    else if (idx / (50 * (12*15+7)) == 1) shot = {velocity, dc::moves::Shot::Rotation::kCCW};
-    else std::cerr << "shot error!";
+    #pragma omp parallel for
+    for (auto i = 0; i < nCandidate; ++i) {   
+        indices_copy[i] = indices.index({0, i}).item<int>();
+        velocity[i] = PixelToVelocity(indices_copy[i] % (50 * (12*15+7)) / (12*15+7), indices_copy[i] % (50 * (12*15+7)) % (12*15+7));
+
+        if (indices_copy[i] / (50 * (12*15+7)) == 0) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCW};
+        else if (indices_copy[i] / (50 * (12*15+7)) == 1) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCCW};
+        else std::cerr << "shot error!";
+    }
 
 
     auto & current_player = *g_players[game_state.shot / 4];
 
     g_simulator->Save(*g_simulator_storage);
 
-    std::array<dc::GameState, 100> temp_game_states;
-    std::array<dc::Move, 100> temp_moves;
+    std::vector<dc::GameState> temp_game_states;
+    temp_game_states.resize(50);
+    std::array<dc::Move, 50> temp_moves;
 
-    #pragma omp parallel for
-    for (unsigned i = 0; i < 100; ++i) {
-        temp_game_states[i] = game_state;
-        temp_moves[i] = shot;
-        g_simulators[i]->Load(*g_simulator_storage);
+    torch::Tensor prob_ave = torch::zeros({nCandidate});
 
-        dc::ApplyMove(g_game_setting, *g_simulators[i],
-            current_player, temp_game_states[i], temp_moves[i], std::chrono::milliseconds(0));
+    int count = 0;
+    auto now = std::chrono::system_clock::now();
+    while ((count < nCandidate * nSimulation) && (now - start < limit)){
+        #pragma omp parallel for
+        for (unsigned i = 0; i < nBatchSize; ++i) {
+            temp_game_states[i] = current_game_state;
+            temp_moves[i] = shots[(count + i)/nSimulation];
+            g_simulators[i]->Load(*g_simulator_storage);
 
-        // auto outputs = module.forward(GameStateToInput({temp_game_state}, g_game_setting)).toTuple();
+            dc::ApplyMove(g_game_setting, *g_simulators[i],
+                current_player, temp_game_states[i], temp_moves[i], std::chrono::milliseconds(0));
+        }
+
+        auto outputs = module.forward(GameStateToInput(temp_game_states, g_game_setting)).toTuple();
+
+        torch::Tensor prob = F::softmax(outputs->elements()[1].toTensor().to(torch::kCPU), 1);
+
+        if (g_team != current_game_state.hammer) prob = torch::ones({prob.sizes()[0], 1})-prob;
+
+        for (auto i=0; i < nBatchSize / nSimulation; ++i){
+            prob_ave[count/nSimulation+i] = torch::mean(prob.reshape({nBatchSize / nSimulation, nSimulation}), 1)[i];
+        }
+
+        count += nBatchSize;
+        now = std::chrono::system_clock::now();
     }
 
+    auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+    std::cout << count << " simulations in " << msec << "msec" << std::endl;
 
-    // shot.rotation = dc::moves::Shot::Rotation::kCW; // 時計回り
-
-    return shot;
+    return shots[torch::argmax(prob_ave).item().to<int>()];
 
     // コンシードを行う場合
     // return dc::moves::Concede();
@@ -243,10 +291,10 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 void OnOpponentTurn(dc::GameState const& game_state)
 {
     // TODO AIを作る際はここを編集してください
-    dc::GameState current_game_state = game_state;
+    // dc::GameState current_game_state = game_state;
 
     // Create a vector of inputs.
-    auto outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
+    // auto outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
 }
 
 
@@ -278,7 +326,7 @@ int main(int argc, char const * argv[])
     using nlohmann::json;
 
     // TODO AIの名前を変更する場合はここを変更してください．
-    constexpr auto kName = "SimpleClient";
+    constexpr auto kName = "CNNgen000";
 
     constexpr int kSupportedProtocolVersionMajor = 1;
 
@@ -443,6 +491,8 @@ int main(int argc, char const * argv[])
                 auto const output_message = jout.dump() + '\n';
                 boost::asio::write(socket, boost::asio::buffer(output_message));
                 
+                c10::cuda::CUDACachingAllocator::emptyCache();
+
                 std::cout << "[out] move" << std::endl;
                 if (std::holds_alternative<dc::moves::Shot>(move)) {
                     dc::moves::Shot const& shot = std::get<dc::moves::Shot>(move);
