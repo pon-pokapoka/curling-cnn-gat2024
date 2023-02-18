@@ -15,7 +15,7 @@ namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
 
 const int nSimulation = 1;
-const int nBatchSize = 50;
+const int nBatchSize = 100;
 const int nCandidate = 500;
 
 
@@ -26,7 +26,7 @@ dc::Team g_team;  // 自身のチームID
 torch::jit::script::Module module;
 dc::GameSetting g_game_setting;
 std::unique_ptr<dc::ISimulator> g_simulator;
-std::array<std::unique_ptr<dc::ISimulator>, nCandidate> g_simulators;
+std::array<std::unique_ptr<dc::ISimulator>, nBatchSize> g_simulators;
 std::unique_ptr<dc::ISimulatorStorage> g_simulator_storage;
 std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
 
@@ -100,6 +100,53 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
 }
 
 
+torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_setting)
+{
+    torch::Tensor filt = torch::zeros({2, 50, 12*15+7}).to("cpu");
+
+    for (auto i=0; i < 50; ++i){
+        for (auto j=0; j < 187; ++j){
+            if ((1 <= i) && (i < 37) && (j < 94)) filt.index({1, i, j}) = 1;
+            if ((1 <= i) && (i < 37) && (j >= 93)) filt.index({0, i, j}) = 1;
+        }
+    }
+
+
+    for (size_t team_stone_idx = 0; team_stone_idx < game_state.kShotPerEnd / 2; ++team_stone_idx) {
+        auto const& stone_hammer = game_state.stones[static_cast<size_t>(game_state.hammer)][team_stone_idx];
+        auto const& stone_nohammer = game_state.stones[static_cast<size_t>(dc::GetOpponentTeam(game_state.hammer))][team_stone_idx];
+        if (stone_hammer) {
+            std::pair <int, int> pixel = PositionToPixel(stone_hammer->position);
+            for (auto i=0; i < 50; ++i){
+                for (auto j=0; j < 187; ++j){
+                    if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
+                        filt.index({1, i, j}) = 1;
+                    }
+                    if ((-4*(i - 50) <= j - (187 - (pixel.second - (pixel.first - 252)/20))) && (-4*(i - 50) >= j - (187 - (pixel.second - (pixel.first - 252)/20 - 40)))) {
+                        filt.index({0, i, j}) = 1;
+                    }
+                }
+            }
+        }
+        if (stone_nohammer) {
+            std::pair <int, int> pixel = PositionToPixel(stone_nohammer->position);
+            for (auto i=0; i < 50; ++i){
+                for (auto j=0; j < 187; ++j){
+                    if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
+                        filt.index({1, i, j}) = 1;
+                    }
+                    if ((-4*(i - 50) <= j - (187 - (pixel.second - (pixel.first - 252)/20))) && (-4*(i - 50) >= j - (187 - (pixel.second - (pixel.first - 252)/20 - 40)))) {
+                        filt.index({0, i, j}) = 1;
+                    }
+                }
+            }
+        }
+    }
+
+    return filt;
+}
+
+
 /// \brief サーバーから送られてきた試合設定が引数として渡されるので，試合前の準備を行います．
 ///
 /// 引数 \p player_order を編集することでプレイヤーのショット順を変更することができます．各プレイヤーの情報は \p player_factories に格納されています．
@@ -136,7 +183,7 @@ void OnInit(
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("../model/traced_curling_cnn_gen000-e001.pt", device);
+        module = torch::jit::load("../model/traced_curling_cnn_gen001-e001.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -164,12 +211,12 @@ void OnInit(
     g_game_setting = game_setting;
     if (simulator_factory) {
         g_simulator = simulator_factory->CreateSimulator();
-        for (unsigned i = 0; i < 100; ++i) {
+        for (unsigned i = 0; i < nBatchSize; ++i) {
             g_simulators[i] = simulator_factory->CreateSimulator();
         }
     } else {
         g_simulator = dc::simulators::SimulatorFCV1Factory().CreateSimulator();
-        for (unsigned i = 0; i < 100; ++i) {
+        for (unsigned i = 0; i < nBatchSize; ++i) {
             g_simulators[i] = dc::simulators::SimulatorFCV1Factory().CreateSimulator();
         }
     }
@@ -187,7 +234,7 @@ void OnInit(
         }
     }
 
-    limit = g_game_setting.thinking_time[0] * 0.8 / 80.;
+    limit = g_game_setting.thinking_time[0] * 0.7 / 80.;
 }
 
 
@@ -213,7 +260,7 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
     // int idx = torch::argmax(policy[0]).item().to<int>();
     // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
-    // auto indices = std::get<1>(torch::topk(policy * torch::rand({18700}), 100));
+    // auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}), nCandidate));
     auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}), nCandidate));
     std::array<int, nCandidate> indices_copy;
 
@@ -239,8 +286,8 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
     g_simulator->Save(*g_simulator_storage);
 
     std::vector<dc::GameState> temp_game_states;
-    temp_game_states.resize(50);
-    std::array<dc::Move, 50> temp_moves;
+    temp_game_states.resize(nBatchSize);
+    std::array<dc::Move, nBatchSize> temp_moves;
 
     torch::Tensor prob_ave = torch::zeros({nCandidate});
 
@@ -326,7 +373,7 @@ int main(int argc, char const * argv[])
     using nlohmann::json;
 
     // TODO AIの名前を変更する場合はここを変更してください．
-    constexpr auto kName = "CNNgen000";
+    constexpr auto kName = "CNNgen001";
 
     constexpr int kSupportedProtocolVersionMajor = 1;
 
