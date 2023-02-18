@@ -183,7 +183,7 @@ void OnInit(
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("../model/traced_curling_cnn_gen001-e001.pt", device);
+        module = torch::jit::load("../model/traced_curling_cnn_gen002-e001.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -258,10 +258,12 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
     auto policy = F::softmax(current_outputs->elements()[0].toTensor().reshape({1, 18700}).to(torch::kCPU), 1);
 
+    torch::Tensor filt = createFilter(current_game_state, g_game_setting);
+
     // int idx = torch::argmax(policy[0]).item().to<int>();
     // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
     // auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}), nCandidate));
-    auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}), nCandidate));
+    auto indices = std::get<1>(torch::topk(torch::rand({1, 18700} * filt.reshape({1, 18700})), nCandidate));
     std::array<int, nCandidate> indices_copy;
 
     // std::cout << idx << std::endl;
@@ -373,7 +375,7 @@ int main(int argc, char const * argv[])
     using nlohmann::json;
 
     // TODO AIの名前を変更する場合はここを変更してください．
-    constexpr auto kName = "CNNgen001";
+    constexpr auto kName = "CNNgen002";
 
     constexpr int kSupportedProtocolVersionMajor = 1;
 
