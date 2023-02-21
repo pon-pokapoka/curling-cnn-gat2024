@@ -15,7 +15,7 @@ namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
 
 const int nSimulation = 1;
-const int nBatchSize = 100;
+const int nBatchSize = 50;
 const int nCandidate = 500;
 
 
@@ -39,8 +39,8 @@ std::pair<int, int> PositionToPixel(dc::Vector2 position)
 {
     std::pair<int, int> pixel;
 
-    pixel.first = (int)round((position.y - 32.004)/0.0254);
-    pixel.second = 93 - (int)round(position.x/0.0254);
+    pixel.first = static_cast<int>(round((position.y - 32.004)/0.0254));
+    pixel.second = 93 - static_cast<int>(round(position.x/0.0254));
 
     return pixel;
 }
@@ -64,21 +64,24 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
     torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), 2, 27*12+12, 12*15+7}).to(device);
     torch::Tensor end = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
     torch::Tensor score = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
-    torch::Tensor stone = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
+    torch::Tensor shot = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
 
-    for (size_t k; k < game_states.size(); ++k){
+    for (size_t k=0; k < game_states.size(); ++k){
         int i = static_cast<int>(k);
-        stone.index({i}) = (game_states[i].kShotPerEnd - game_states[i].shot) / 16.f;
-        score.index({i}) = (game_states[i].GetTotalScore(game_states[i].hammer) - game_states[i].GetTotalScore(dc::GetOpponentTeam(game_states[i].hammer))) * 0.1f + 0.5f;
+        shot.index({i, 0}) = (game_states[i].kShotPerEnd - game_states[i].shot) / 16.f;
+        score.index({i, 0}) = (static_cast<float>(game_states[i].GetTotalScore(game_states[i].hammer)) - static_cast<float>(game_states[i].GetTotalScore(dc::GetOpponentTeam(game_states[i].hammer)))) * 0.1f + 0.5f;
         if (game_states[i].end < game_setting.max_end){
-            end.index({i}) = (game_setting.max_end - game_states[i].end) / 10.f;
+            end.index({i, 0}) = (game_setting.max_end - game_states[i].end) / 10.f;
         } else {
-            end.index({i}) = 0.1f;
+            end.index({i, 0}) = 0.1f;
         }
+        // std::cout << game_states[i].kShotPerEnd << std::endl;
         for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
             auto const& stone = game_states[i].stones[static_cast<size_t>(dc::GetOpponentTeam(game_states[i].hammer))][team_stone_idx];
+            // std::cout << stone_nohammer->position.x << std::endl;
             if (stone) {
                 std::pair <int, int> pixel = PositionToPixel(stone->position);
+                // std::cout << pixel << std::endl;
                 sheet.index({i, 0, pixel.first, pixel.second}) = 1;
             }
         }
@@ -86,6 +89,7 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
             auto const& stone = game_states[i].stones[static_cast<size_t>(game_states[i].hammer)][team_stone_idx];
             if (stone) {
                 std::pair <int, int> pixel = PositionToPixel(stone->position);
+                // std::cout << pixel << std::endl;
                 sheet.index({i, 1, pixel.first, pixel.second}) = 1;
             }
         }
@@ -94,7 +98,7 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
     inputs.push_back(sheet);
     inputs.push_back(end);
     inputs.push_back(score);
-    inputs.push_back(stone);
+    inputs.push_back(shot);
 
     return inputs;
 }
@@ -117,6 +121,7 @@ torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_settin
         auto const& stone_nohammer = game_state.stones[static_cast<size_t>(dc::GetOpponentTeam(game_state.hammer))][team_stone_idx];
         if (stone_hammer) {
             std::pair <int, int> pixel = PositionToPixel(stone_hammer->position);
+            // std::cout << pixel << std::endl;
             for (auto i=0; i < 50; ++i){
                 for (auto j=0; j < 187; ++j){
                     if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
@@ -130,6 +135,7 @@ torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_settin
         }
         if (stone_nohammer) {
             std::pair <int, int> pixel = PositionToPixel(stone_nohammer->position);
+            // std::cout << pixel << std::endl;
             for (auto i=0; i < 50; ++i){
                 for (auto j=0; j < 187; ++j){
                     if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
@@ -183,7 +189,7 @@ void OnInit(
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("../model/traced_curling_cnn_gen002-e001.pt", device);
+        module = torch::jit::load("../model/traced_curling_cnn_gen003-e001.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -251,6 +257,20 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
     auto start = std::chrono::system_clock::now();
 
     dc::GameState current_game_state = game_state;
+
+    // std::cout << (current_game_state.kShotPerEnd - current_game_state.shot) / 16.f << std::endl;
+    // std::cout << (static_cast<float>(current_game_state.GetTotalScore(current_game_state.hammer)) - static_cast<float>(current_game_state.GetTotalScore(dc::GetOpponentTeam(current_game_state.hammer)))) * 0.1f + 0.5f << std::endl;
+    // std::cout << (g_game_setting.max_end - current_game_state.end) / 10.f << std::endl;
+
+    // auto inputs = GameStateToInput({current_game_state}, g_game_setting);
+
+    // std::cout << inputs[1] << "  " << inputs[2] << "   " << inputs[3] << std::endl;
+    // for (auto i=0; i < 12*28; ++i){
+    //     for (auto j=0; j < 187; ++j){
+    //         if (inputs[0].toTensor()[0][0][i][j].item<int>() + inputs[0].toTensor()[0][1][i][j].item<int>() > 0) std::cout << i << "  " << j << std::endl;
+    //     }
+    // }    
+
     torch::NoGradGuard no_grad; 
 
     // Create a vector of inputs.
@@ -262,8 +282,8 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
     // int idx = torch::argmax(policy[0]).item().to<int>();
     // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
-    // auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}), nCandidate));
-    auto indices = std::get<1>(torch::topk(torch::rand({1, 18700} * filt.reshape({1, 18700})), nCandidate));
+    // auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
+    auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
     std::array<int, nCandidate> indices_copy;
 
     // std::cout << idx << std::endl;
@@ -306,9 +326,12 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
                 current_player, temp_game_states[i], temp_moves[i], std::chrono::milliseconds(0));
         }
 
+        // auto inputs = GameStateToInput(temp_game_states, g_game_setting);
         auto outputs = module.forward(GameStateToInput(temp_game_states, g_game_setting)).toTuple();
 
-        torch::Tensor prob = F::softmax(outputs->elements()[1].toTensor().to(torch::kCPU), 1);
+        torch::Tensor prob = torch::sigmoid(outputs->elements()[1].toTensor().to(torch::kCPU));
+
+        // std::cout << inputs[1] << inputs[2] << inputs[3] << std::endl;
 
         if (g_team != current_game_state.hammer) prob = torch::ones({prob.sizes()[0], 1})-prob;
 
@@ -322,6 +345,10 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
     auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
     std::cout << count << " simulations in " << msec << "msec" << std::endl;
+
+    // for (auto i=0; i < 8; ++i){
+        // std::cout << indices[0][i].item() << "   " << prob_ave[i].item<float>() << std::endl;
+    // }
 
     return shots[torch::argmax(prob_ave).item().to<int>()];
 
@@ -375,7 +402,7 @@ int main(int argc, char const * argv[])
     using nlohmann::json;
 
     // TODO AIの名前を変更する場合はここを変更してください．
-    constexpr auto kName = "CNNgen002";
+    constexpr auto kName = "CNNgen003";
 
     constexpr int kSupportedProtocolVersionMajor = 1;
 
