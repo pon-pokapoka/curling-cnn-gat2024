@@ -14,9 +14,9 @@
 namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
 
-const int nSimulation = 1;
-const int nBatchSize = 50;
-const int nCandidate = 500;
+const int nSimulation = 4;
+const int nBatchSize = 56;
+const int nCandidate = 560;
 
 
 namespace {
@@ -68,6 +68,8 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
 
     for (size_t k=0; k < game_states.size(); ++k){
         int i = static_cast<int>(k);
+        if (game_states[i].IsGameOver()) continue;
+
         shot.index({i, 0}) = (game_states[i].kShotPerEnd - game_states[i].shot) / 16.f;
         score.index({i, 0}) = (static_cast<float>(game_states[i].GetTotalScore(game_states[i].hammer)) - static_cast<float>(game_states[i].GetTotalScore(dc::GetOpponentTeam(game_states[i].hammer)))) * 0.1f + 0.5f;
         if (game_states[i].end < game_setting.max_end){
@@ -103,15 +105,19 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
     return inputs;
 }
 
-
+// policyのショット効果のないショットを除くフィルターを作成
+// ガードゾーン、ハウスに止まるショットと、シート状にあるストーンに干渉するショットのみを残す
 torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_setting)
 {
     torch::Tensor filt = torch::zeros({2, 50, 12*15+7}).to("cpu");
 
+    int min_velocity = 1;
+    if (game_state.shot+1 == game_state.kShotPerEnd) min_velocity = 13; // ラストエンドはハウスに届かないショットを投げても意味がない
+
     for (auto i=0; i < 50; ++i){
         for (auto j=0; j < 187; ++j){
-            if ((1 <= i) && (i < 37) && (j < 94)) filt.index({1, i, j}) = 1;
-            if ((1 <= i) && (i < 37) && (j >= 93)) filt.index({0, i, j}) = 1;
+            if ((min_velocity <= i) && (i < 37) && (j < 94)) filt.index({1, i, j}) = 1;
+            if ((min_velocity <= i) && (i < 37) && (j >= 93)) filt.index({0, i, j}) = 1;
         }
     }
 
@@ -198,10 +204,10 @@ void OnInit(
 
     for (unsigned i = 0; i < 1; ++i) {
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(torch::rand({50, 2, 27*12+12, 12*15+7}).to(device));
-        inputs.push_back(torch::rand({50, 1}).to(device));
-        inputs.push_back(torch::rand({50, 1}).to(device));
-        inputs.push_back(torch::rand({50, 1}).to(device));
+        inputs.push_back(torch::rand({10, 2, 27*12+12, 12*15+7}).to(device));
+        inputs.push_back(torch::rand({10, 1}).to(device));
+        inputs.push_back(torch::rand({10, 1}).to(device));
+        inputs.push_back(torch::rand({10, 1}).to(device));
 
         // Execute the model and turn its output into a tensor.
         auto outputs = module.forward(inputs).toTuple();
@@ -241,6 +247,13 @@ void OnInit(
     }
 
     limit = g_game_setting.thinking_time[0] * 0.7 / 80.;
+
+    int dummy = 0;
+
+    #pragma omp parallel for
+    for (auto i=0; i < 2000000; ++i) {
+        ++dummy;
+    }
 }
 
 
@@ -335,6 +348,18 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
         if (g_team != current_game_state.hammer) prob = torch::ones({prob.sizes()[0], 1})-prob;
 
+        if (current_game_state.shot+1 == current_game_state.kShotPerEnd){
+            for (auto i=0; i < nBatchSize; ++i){
+                if (temp_game_states[i].IsGameOver()){
+                    prob.index({i, 0}) = g_team == temp_game_states[i].game_result->winner;
+                } else if (temp_game_states[i].hammer == dc::GetOpponentTeam(g_team)) {
+                    prob.index({i, 0}) = 1 - prob.index({i, 0});
+                }
+
+                // std::cout << dc::ToString(temp_game_states[i].hammer) << "  " << prob.index({i, 0}).item() << std::endl;
+            }
+        }
+
         for (auto i=0; i < nBatchSize / nSimulation; ++i){
             prob_ave[count/nSimulation+i] = torch::mean(prob.reshape({nBatchSize / nSimulation, nSimulation}), 1)[i];
         }
@@ -347,7 +372,7 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
     std::cout << count << " simulations in " << msec << "msec" << std::endl;
 
     // for (auto i=0; i < 8; ++i){
-        // std::cout << indices[0][i].item() << "   " << prob_ave[i].item<float>() << std::endl;
+    //     std::cout << indices[0][i].item() << "   " << prob_ave[i].item<float>() << std::endl;
     // }
 
     return shots[torch::argmax(prob_ave).item().to<int>()];
