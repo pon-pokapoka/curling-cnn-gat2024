@@ -195,7 +195,7 @@ void OnInit(
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("../model/traced_curling_cnn_gen003-e001.pt", device);
+        module = torch::jit::load("../model/traced_curling_cnn_gen004-e010.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -250,10 +250,10 @@ void OnInit(
 
     int dummy = 0;
 
-    #pragma omp parallel for
-    for (auto i=0; i < 2000000; ++i) {
-        ++dummy;
-    }
+    // #pragma omp parallel for
+    // for (auto i=0; i < 2000000; ++i) {
+    //     ++dummy;
+    // }
 }
 
 
@@ -295,8 +295,8 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
     // int idx = torch::argmax(policy[0]).item().to<int>();
     // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
-    // auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
-    auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
+    auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
+    // auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
     std::array<int, nCandidate> indices_copy;
 
     // std::cout << idx << std::endl;
@@ -427,7 +427,7 @@ int main(int argc, char const * argv[])
     using nlohmann::json;
 
     // TODO AIの名前を変更する場合はここを変更してください．
-    constexpr auto kName = "CNNgen003";
+    constexpr auto kName = "CNNgen004";
 
     constexpr int kSupportedProtocolVersionMajor = 1;
 
