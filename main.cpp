@@ -15,8 +15,8 @@ namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
 
 const int nSimulation = 4;
-const int nBatchSize = 56;
-const int nCandidate = 560;
+const int nBatchSize = 48;
+const int nCandidate = 480;
 
 
 namespace {
@@ -195,7 +195,7 @@ void OnInit(
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("../model/traced_curling_cnn_gen004-e010.pt", device);
+        module = torch::jit::load("../model/traced_curling_cnn__nopolicy_gen005-e003.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -204,10 +204,10 @@ void OnInit(
 
     for (unsigned i = 0; i < 1; ++i) {
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(torch::rand({10, 2, 27*12+12, 12*15+7}).to(device));
-        inputs.push_back(torch::rand({10, 1}).to(device));
-        inputs.push_back(torch::rand({10, 1}).to(device));
-        inputs.push_back(torch::rand({10, 1}).to(device));
+        inputs.push_back(torch::rand({1, 2, 27*12+12, 12*15+7}).to(device));
+        inputs.push_back(torch::rand({1, 1}).to(device));
+        inputs.push_back(torch::rand({1, 1}).to(device));
+        inputs.push_back(torch::rand({1, 1}).to(device));
 
         // Execute the model and turn its output into a tensor.
         auto outputs = module.forward(inputs).toTuple();
@@ -293,89 +293,106 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
     torch::Tensor filt = createFilter(current_game_state, g_game_setting);
 
-    // int idx = torch::argmax(policy[0]).item().to<int>();
-    // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
-    auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
-    // auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
+
     std::array<int, nCandidate> indices_copy;
-
-    // std::cout << idx << std::endl;
-
-
     std::array<dc::moves::Shot, nCandidate> shots;
     std::array<dc::Vector2, nCandidate> velocity;
 
-    #pragma omp parallel for
-    for (auto i = 0; i < nCandidate; ++i) {   
+    if (current_game_state.shot < 4){ // random shot 
+        auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), 1));
+
+        int i = 0;
         indices_copy[i] = indices.index({0, i}).item<int>();
         velocity[i] = PixelToVelocity(indices_copy[i] % (50 * (12*15+7)) / (12*15+7), indices_copy[i] % (50 * (12*15+7)) % (12*15+7));
 
         if (indices_copy[i] / (50 * (12*15+7)) == 0) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCW};
         else if (indices_copy[i] / (50 * (12*15+7)) == 1) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCCW};
         else std::cerr << "shot error!";
-    }
+
+        return shots[i];
+    } else {
+
+        // int idx = torch::argmax(policy[0]).item().to<int>();
+        // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
+        // auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
+        auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
+
+        // std::cout << idx << std::endl;
 
 
-    auto & current_player = *g_players[game_state.shot / 4];
 
-    g_simulator->Save(*g_simulator_storage);
-
-    std::vector<dc::GameState> temp_game_states;
-    temp_game_states.resize(nBatchSize);
-    std::array<dc::Move, nBatchSize> temp_moves;
-
-    torch::Tensor prob_ave = torch::zeros({nCandidate});
-
-    int count = 0;
-    auto now = std::chrono::system_clock::now();
-    while ((count < nCandidate * nSimulation) && (now - start < limit)){
         #pragma omp parallel for
-        for (unsigned i = 0; i < nBatchSize; ++i) {
-            temp_game_states[i] = current_game_state;
-            temp_moves[i] = shots[(count + i)/nSimulation];
-            g_simulators[i]->Load(*g_simulator_storage);
+        for (auto i = 0; i < nCandidate; ++i) {   
+            indices_copy[i] = indices.index({0, i}).item<int>();
+            velocity[i] = PixelToVelocity(indices_copy[i] % (50 * (12*15+7)) / (12*15+7), indices_copy[i] % (50 * (12*15+7)) % (12*15+7));
 
-            dc::ApplyMove(g_game_setting, *g_simulators[i],
-                current_player, temp_game_states[i], temp_moves[i], std::chrono::milliseconds(0));
+            if (indices_copy[i] / (50 * (12*15+7)) == 0) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCW};
+            else if (indices_copy[i] / (50 * (12*15+7)) == 1) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCCW};
+            else std::cerr << "shot error!";
         }
 
-        // auto inputs = GameStateToInput(temp_game_states, g_game_setting);
-        auto outputs = module.forward(GameStateToInput(temp_game_states, g_game_setting)).toTuple();
 
-        torch::Tensor prob = torch::sigmoid(outputs->elements()[1].toTensor().to(torch::kCPU));
+        auto & current_player = *g_players[game_state.shot / 4];
 
-        // std::cout << inputs[1] << inputs[2] << inputs[3] << std::endl;
+        g_simulator->Save(*g_simulator_storage);
 
-        if (g_team != current_game_state.hammer) prob = torch::ones({prob.sizes()[0], 1})-prob;
+        std::vector<dc::GameState> temp_game_states;
+        temp_game_states.resize(nBatchSize);
+        std::array<dc::Move, nBatchSize> temp_moves;
 
-        if (current_game_state.shot+1 == current_game_state.kShotPerEnd){
-            for (auto i=0; i < nBatchSize; ++i){
-                if (temp_game_states[i].IsGameOver()){
-                    prob.index({i, 0}) = g_team == temp_game_states[i].game_result->winner;
-                } else if (temp_game_states[i].hammer == dc::GetOpponentTeam(g_team)) {
-                    prob.index({i, 0}) = 1 - prob.index({i, 0});
-                }
+        torch::Tensor prob_ave = torch::zeros({nCandidate});
 
-                // std::cout << dc::ToString(temp_game_states[i].hammer) << "  " << prob.index({i, 0}).item() << std::endl;
+        int count = 0;
+        auto now = std::chrono::system_clock::now();
+        while ((count < nCandidate * nSimulation) && (now - start < limit)){
+            #pragma omp parallel for
+            for (unsigned i = 0; i < nBatchSize; ++i) {
+                temp_game_states[i] = current_game_state;
+                temp_moves[i] = shots[(count + i)/nSimulation];
+                g_simulators[i]->Load(*g_simulator_storage);
+
+                dc::ApplyMove(g_game_setting, *g_simulators[i],
+                    current_player, temp_game_states[i], temp_moves[i], std::chrono::milliseconds(0));
             }
+
+            // auto inputs = GameStateToInput(temp_game_states, g_game_setting);
+            auto outputs = module.forward(GameStateToInput(temp_game_states, g_game_setting)).toTuple();
+
+            torch::Tensor prob = torch::sigmoid(outputs->elements()[1].toTensor().to(torch::kCPU));
+
+            // std::cout << inputs[1] << inputs[2] << inputs[3] << std::endl;
+
+            if (g_team != current_game_state.hammer) prob = torch::ones({prob.sizes()[0], 1})-prob;
+
+            if (current_game_state.shot+1 == current_game_state.kShotPerEnd){
+                for (auto i=0; i < nBatchSize; ++i){
+                    if (temp_game_states[i].IsGameOver()){
+                        prob.index({i, 0}) = g_team == temp_game_states[i].game_result->winner;
+                    } else if (temp_game_states[i].hammer == dc::GetOpponentTeam(g_team)) {
+                        prob.index({i, 0}) = 1 - prob.index({i, 0});
+                    }
+
+                    // std::cout << dc::ToString(temp_game_states[i].hammer) << "  " << prob.index({i, 0}).item() << std::endl;
+                }
+            }
+
+            for (auto i=0; i < nBatchSize / nSimulation; ++i){
+                prob_ave[count/nSimulation+i] = torch::mean(prob.reshape({nBatchSize / nSimulation, nSimulation}), 1)[i];
+            }
+
+            count += nBatchSize;
+            now = std::chrono::system_clock::now();
         }
 
-        for (auto i=0; i < nBatchSize / nSimulation; ++i){
-            prob_ave[count/nSimulation+i] = torch::mean(prob.reshape({nBatchSize / nSimulation, nSimulation}), 1)[i];
-        }
+        auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+        std::cout << count << " simulations in " << msec << "msec" << std::endl;
 
-        count += nBatchSize;
-        now = std::chrono::system_clock::now();
+        // for (auto i=0; i < 8; ++i){
+        //     std::cout << indices[0][i].item() << "   " << prob_ave[i].item<float>() << std::endl;
+        // }
+
+        return shots[torch::argmax(prob_ave).item().to<int>()];
     }
-
-    auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
-    std::cout << count << " simulations in " << msec << "msec" << std::endl;
-
-    // for (auto i=0; i < 8; ++i){
-    //     std::cout << indices[0][i].item() << "   " << prob_ave[i].item<float>() << std::endl;
-    // }
-
-    return shots[torch::argmax(prob_ave).item().to<int>()];
 
     // コンシードを行う場合
     // return dc::moves::Concede();
