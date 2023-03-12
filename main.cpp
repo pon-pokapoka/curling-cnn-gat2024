@@ -32,7 +32,7 @@ std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
 
 std::chrono::duration<double> limit;
 
-torch::Device device(torch::kCUDA);
+torch::Device device(torch::kCPU);
 
 
 std::pair<int, int> PositionToPixel(dc::Vector2 position)
@@ -195,7 +195,7 @@ void OnInit(
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("../model/traced_curling_cnn__nopolicy_gen005-e003.pt", device);
+        module = torch::jit::load("model/traced_curling_cnn__nopolicy_gen005-e003.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -346,7 +346,7 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
         auto now = std::chrono::system_clock::now();
         while ((count < nCandidate * nSimulation) && (now - start < limit)){
             #pragma omp parallel for
-            for (unsigned i = 0; i < nBatchSize; ++i) {
+            for (auto i = 0; i < nBatchSize; ++i) {
                 temp_game_states[i] = current_game_state;
                 temp_moves[i] = shots[(count + i)/nSimulation];
                 g_simulators[i]->Load(*g_simulator_storage);
