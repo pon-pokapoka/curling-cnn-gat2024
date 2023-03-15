@@ -7,6 +7,7 @@
 #include "digitalcurling3/digitalcurling3.hpp"
 
 #include <torch/script.h>
+#include <torch/cuda.h>
 #include <torch/csrc/api/include/torch/nn/functional/activation.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 
@@ -32,7 +33,7 @@ std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
 
 std::chrono::duration<double> limit;
 
-torch::Device device(torch::kCUDA);
+torch::Device device(torch::kCPU);
 
 
 std::pair<int, int> PositionToPixel(dc::Vector2 position)
@@ -192,6 +193,12 @@ void OnInit(
     g_team = team;
 
     torch::NoGradGuard no_grad; 
+
+    device = torch::kCPU;
+    if (torch::cuda::is_available()) {
+        std::cout << "CUDA is available!" << std::endl;
+        device = torch::kCUDA;
+    }   
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
