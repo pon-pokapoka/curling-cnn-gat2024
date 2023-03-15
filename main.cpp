@@ -7,6 +7,7 @@
 #include "digitalcurling3/digitalcurling3.hpp"
 
 #include <torch/script.h>
+#include <torch/cuda.h>
 #include <torch/csrc/api/include/torch/nn/functional/activation.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 
@@ -192,10 +193,16 @@ void OnInit(
     g_team = team;
 
     torch::NoGradGuard no_grad; 
+
+    device = torch::kCPU;
+    if (torch::cuda::is_available()) {
+        std::cout << "CUDA is available!" << std::endl;
+        device = torch::kCUDA;
+    }   
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("model/traced_curling_cnn__nopolicy_gen005-e003.pt", device);
+        module = torch::jit::load("../model/traced_curling_cnn_gen006-e005.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -298,7 +305,7 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
     std::array<dc::moves::Shot, nCandidate> shots;
     std::array<dc::Vector2, nCandidate> velocity;
 
-    if (current_game_state.shot < 4){ // random shot 
+    if (current_game_state.shot < 0){ // random shot 
         auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), 1));
 
         int i = 0;
@@ -314,8 +321,8 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
         // int idx = torch::argmax(policy[0]).item().to<int>();
         // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
-        // auto indices = std::get<1>(torch::topk(policy * torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
-        auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate));
+        auto indices = std::get<1>(torch::topk((policy + torch::randn({1, 18700}) * 2e-4) * filt.reshape({1, 18700}), nCandidate));
+        // auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate)); // random selection
 
         // std::cout << idx << std::endl;
 
@@ -444,7 +451,7 @@ int main(int argc, char const * argv[])
     using nlohmann::json;
 
     // TODO AIの名前を変更する場合はここを変更してください．
-    constexpr auto kName = "CNNgen004";
+    constexpr auto kName = "CNNgen006";
 
     constexpr int kSupportedProtocolVersionMajor = 1;
 
