@@ -16,8 +16,8 @@ namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
 
 const int nSimulation = 4;
-const int nBatchSize = 48;
-const int nCandidate = 480;
+const int nBatchSize = 100;
+const int nCandidate = 2000;
 
 
 namespace {
@@ -202,7 +202,7 @@ void OnInit(
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("../model/traced_curling_cnn_gen006-e005.pt", device);
+        module = torch::jit::load("model/traced_curling_cnn_gat2023.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -451,7 +451,7 @@ int main(int argc, char const * argv[])
     using nlohmann::json;
 
     // TODO AIの名前を変更する場合はここを変更してください．
-    constexpr auto kName = "CNNgen006";
+    constexpr auto kName = "CurlingCNN";
 
     constexpr int kSupportedProtocolVersionMajor = 1;
 
