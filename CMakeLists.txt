@@ -24,8 +24,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_subdirectory(extern/DigitalCurling3)
 
 # TCP/IP接続に使用するBoost.Asioライブラリを読み込みます
-set(BOOST_DIR C:/Boost)
-list(APPEND CMAKE_PREFIX_PATH ${BOOST_DIR})
+# set(BOOST_DIR C:/Boost)
+# list(APPEND CMAKE_PREFIX_PATH ${BOOST_DIR})
 
 set(Boost_USE_STATIC_LIBS ON)
 set(Boost_USE_MULTITHREADED ON)
@@ -33,11 +33,14 @@ set(Boost_USE_STATIC_RUNTIME OFF)
 find_package(Boost 1.75 REQUIRED COMPONENTS date_time regex)
 
 # Threadsライブラリを読み込みます
-set(LIBTORCH_DIR C:/Users/pon/Downloads/libtorch-win-shared-with-deps-debug-1.13.1+cu117/libtorch/)
-list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 find_package(Threads REQUIRED)
+
+# libtorch
+set(LIBTORCH_DIR /home/pon/local/libtorch/)
+list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 find_package(Torch REQUIRED)
 
+# OpenMP
 find_package(OpenMP)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
@@ -64,6 +67,7 @@ target_link_libraries(digitalcurling3_cnn  # add_executable() で実行ファイ
     "${TORCH_LIBRARIES}"
 )
 
+# Windowsで.dllファイルをコピー
 if (MSVC)
   file(GLOB TORCH_DLLS "${TORCH_INSTALL_PREFIX}/lib/*.dll")
   add_custom_command(TARGET digitalcurling3_cnn

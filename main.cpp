@@ -15,7 +15,7 @@
 namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
 
-const int nSimulation = 4;
+const int nSimulation = 1;
 const int nBatchSize = 100;
 const int nCandidate = 2000;
 
@@ -119,6 +119,9 @@ torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_settin
         for (auto j=0; j < 187; ++j){
             if ((min_velocity <= i) && (i < 37) && (j < 94)) filt.index({1, i, j}) = 1;
             if ((min_velocity <= i) && (i < 37) && (j >= 93)) filt.index({0, i, j}) = 1;
+
+            if ((i < 37) && (j < 139)) filt.index({1, i, j}) = 0; // block side guard
+            if ((i < 37) && (j >= 48)) filt.index({0, i, j}) = 0;
         }
     }
 
@@ -202,7 +205,7 @@ void OnInit(
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("model/traced_curling_cnn_gat2023.pt", device);
+        module = torch::jit::load("model/traced_curling_shotbyshot-001.pt", device);
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
@@ -321,8 +324,8 @@ dc::Move OnMyTurn(dc::GameState const& game_state)
 
         // int idx = torch::argmax(policy[0]).item().to<int>();
         // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
-        auto indices = std::get<1>(torch::topk((policy + torch::randn({1, 18700}) * 2e-4) * filt.reshape({1, 18700}), nCandidate));
-        // auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate)); // random selection
+        // auto indices = std::get<1>(torch::topk((policy + torch::randn({1, 18700}) * 2e-4) * filt.reshape({1, 18700}), nCandidate));
+        auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate)); // random selection
 
         // std::cout << idx << std::endl;
 
