@@ -15,9 +15,9 @@
 namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
 
-const int nSimulation = 1;
-const int nBatchSize = 100;
-const int nCandidate = 2000;
+const int nSimulation = 4;
+const int nBatchSize = 200;
+const int nCandidate = 10000;
 
 
 namespace {
@@ -120,8 +120,8 @@ torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_settin
             if ((min_velocity <= i) && (i < 37) && (j < 94)) filt.index({1, i, j}) = 1;
             if ((min_velocity <= i) && (i < 37) && (j >= 93)) filt.index({0, i, j}) = 1;
 
-            if ((i < 37) && (j < 139)) filt.index({1, i, j}) = 0; // block side guard
-            if ((i < 37) && (j >= 48)) filt.index({0, i, j}) = 0;
+            if ((i < 37) && (j < 139)) filt.index({0, i, j}) = 0; // block side guard
+            if ((i < 37) && (j >= 48)) filt.index({1, i, j}) = 0;
         }
     }
 
@@ -202,17 +202,37 @@ void OnInit(
         std::cout << "CUDA is available!" << std::endl;
         device = torch::kCUDA;
     }   
+    else {
+        std::cout << "CUDA is not available." << std::endl;
+    }
     // Deserialize the ScriptModule from a file using torch::jit::load().
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load("model/traced_curling_shotbyshot-001.pt", device);
+        std::cout << "model loading..." << std::endl;
+        module = torch::jit::load("model/traced_curling_cnn_gat2023.pt", device);
+        std::cout << "model loaded" << std::endl;
     }
     catch (const c10::Error& e) {
         std::cerr << "error loading the model\n";
     }
 
+    std::cout << "initial inference\n";
+    for (auto i = 0; i < 10; ++i) {
+        std::cout << ".\n";
+        std::vector<torch::jit::IValue> inputs;
+        inputs.push_back(torch::rand({nBatchSize, 2, 27*12+12, 12*15+7}).to(device));
+        inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
+        inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
+        inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
 
-    for (unsigned i = 0; i < 1; ++i) {
+        // Execute the model and turn its output into a tensor.
+        auto outputs = module.forward(inputs).toTuple();
+        torch::Tensor out1 = outputs->elements()[0].toTensor().to(torch::kCPU);
+        torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
+        torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
+    }
+    for (auto i = 0; i < 10; ++i) {
+        std::cout << ".\n";
         std::vector<torch::jit::IValue> inputs;
         inputs.push_back(torch::rand({1, 2, 27*12+12, 12*15+7}).to(device));
         inputs.push_back(torch::rand({1, 1}).to(device));
@@ -224,7 +244,6 @@ void OnInit(
         torch::Tensor out1 = outputs->elements()[0].toTensor().to(torch::kCPU);
         torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
         torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
-
     }
     c10::cuda::CUDACachingAllocator::emptyCache();
 
@@ -256,14 +275,29 @@ void OnInit(
         }
     }
 
-    limit = g_game_setting.thinking_time[0] * 0.7 / 80.;
+    limit = g_game_setting.thinking_time[0] * 0.8 / 8. / g_game_setting.max_end;
 
-    int dummy = 0;
+    std::cout << "initial simulation\n";
+    for (auto j = 0; j < 10; ++j) {
+        std::cout << ".\n";
+        dc::GameState dummy_game_state(g_game_setting);
+        std::array<dc::GameState, nBatchSize> dummy_game_states; 
+        std::array<dc::Move, nBatchSize> dummy_moves;
+        auto & dummy_player = *g_players[0];
+        dc::moves::Shot dummy_shot = {dc::Vector2(0, 2.5), dc::moves::Shot::Rotation::kCW};
+        #pragma omp parallel for
+        for (auto i=0; i < nBatchSize; ++i) {
+            dummy_game_states[i] = dummy_game_state;
+        }
+        #pragma omp parallel for
+        for (auto i=0; i < nBatchSize; ++i) {
+            dummy_moves[i] = dummy_shot;
+            g_simulators[i]->Load(*g_simulator_storage);
 
-    // #pragma omp parallel for
-    // for (auto i=0; i < 2000000; ++i) {
-    //     ++dummy;
-    // }
+            dc::ApplyMove(g_game_setting, *g_simulators[i],
+                dummy_player, dummy_game_states[i], dummy_moves[i], std::chrono::milliseconds(0));
+        }
+    }
 }
 
 
