@@ -13,7 +13,6 @@ _deps
 
 # build directory
 /build/
-/release/
 
 # Visual Studio with CMake
 /out/
