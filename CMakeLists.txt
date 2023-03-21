@@ -24,7 +24,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_subdirectory(extern/DigitalCurling3)
 
 # TCP/IP接続に使用するBoost.Asioライブラリを読み込みます
-# set(BOOST_DIR C:/Boost)
+# set(BOOST_DIR C:/path/to/boost)
 # list(APPEND CMAKE_PREFIX_PATH ${BOOST_DIR})
 
 set(Boost_USE_STATIC_LIBS ON)
@@ -36,7 +36,7 @@ find_package(Boost 1.75 REQUIRED COMPONENTS date_time regex)
 find_package(Threads REQUIRED)
 
 # libtorch
-set(LIBTORCH_DIR /home/pon/local/libtorch/)
+set(LIBTORCH_DIR /path/to/libtorch/)
 list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 find_package(Torch REQUIRED)
 
