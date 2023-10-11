@@ -252,19 +252,12 @@ void OnInit(
     }
     c10::cuda::CUDACachingAllocator::emptyCache();
 
-    // 非対応の場合は シミュレータFCV1を使用する．
+    // シミュレータFCV1Lightを使用する．
     g_team = team;
     g_game_setting = game_setting;
-    if (simulator_factory) {
-        g_simulator = simulator_factory->CreateSimulator();
-        for (unsigned i = 0; i < nBatchSize; ++i) {
-            g_simulators[i] = simulator_factory->CreateSimulator();
-        }
-    } else {
-        g_simulator = dc::simulators::SimulatorFCV1Factory().CreateSimulator();
-        for (unsigned i = 0; i < nBatchSize; ++i) {
-            g_simulators[i] = dc::simulators::SimulatorFCV1Factory().CreateSimulator();
-        }
+    g_simulator = dc::simulators::SimulatorFCV1LightFactory().CreateSimulator();
+    for (unsigned i = 0; i < nBatchSize; ++i) {
+        g_simulators[i] = dc::simulators::SimulatorFCV1LightFactory().CreateSimulator();
     }
     g_simulator_storage = g_simulator->CreateStorage();
 

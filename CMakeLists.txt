@@ -36,7 +36,7 @@ find_package(Boost 1.75 REQUIRED COMPONENTS date_time regex)
 find_package(Threads REQUIRED)
 
 # libtorch
-set(LIBTORCH_DIR /path/to/libtorch/)
+set(LIBTORCH_DIR /mnt/pon/local/libtorch/)
 list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 find_package(Torch REQUIRED)
 
