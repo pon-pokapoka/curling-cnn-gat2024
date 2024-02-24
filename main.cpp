@@ -11,6 +11,8 @@
 #include <torch/csrc/api/include/torch/nn/functional/activation.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 
+#include "readcsv.hpp"
+
 
 namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
@@ -37,6 +39,8 @@ std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
 std::chrono::duration<double> limit; // 考慮時間制限
 
 torch::Device device(torch::kCPU);
+
+std::vector<std::vector<double>> win_table;
 
 // ストーンの座標からシートの画像のピクセルに変換する
 std::pair<int, int> PositionToPixel(dc::Vector2 position)
@@ -197,6 +201,15 @@ void OnInit(
 {
     // TODO AIを作る際はここを編集してください
     g_team = team;
+
+    win_table = readcsv("model/win_table.csv");
+
+    for (const auto& row : win_table) {
+        for (const auto& value : row) {
+            std::cout << value << '\t';
+        }
+        std::cout << std::endl;
+    }
 
     torch::NoGradGuard no_grad; 
 

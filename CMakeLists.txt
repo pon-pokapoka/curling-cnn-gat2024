@@ -30,13 +30,13 @@ add_subdirectory(extern/DigitalCurling3)
 set(Boost_USE_STATIC_LIBS ON)
 set(Boost_USE_MULTITHREADED ON)
 set(Boost_USE_STATIC_RUNTIME OFF)
-find_package(Boost 1.75 REQUIRED COMPONENTS date_time regex)
+find_package(Boost 1.74 REQUIRED COMPONENTS date_time regex)
 
 # Threadsライブラリを読み込みます
 find_package(Threads REQUIRED)
 
 # libtorch
-set(LIBTORCH_DIR /mnt/pon/local/libtorch/)
+set(LIBTORCH_DIR /usr/local/libtorch/)
 list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 find_package(Torch REQUIRED)
 
@@ -45,7 +45,7 @@ find_package(OpenMP)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 
-
+include_directories(include)
 
 # 実行ファイルを定義します
 add_executable(digitalcurling3_cnn  # 実行ファイルの名前はここの名前になります．なおプロジェクト名と一致させる必要はありません．

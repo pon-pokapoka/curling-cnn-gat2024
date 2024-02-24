@@ -20,6 +20,7 @@ _deps
 
 # VSCode
 /.vscode/
+/.devcontainer/
 
 # model
 /model/
