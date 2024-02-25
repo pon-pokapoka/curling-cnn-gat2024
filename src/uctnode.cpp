@@ -2,6 +2,7 @@
 
 UctNode::UctNode():
 parent_(nullptr),
+game_state_(),
 child_nodes_(),
 child_move_indices_(),
 evaluated_(false),
@@ -9,7 +10,7 @@ simulated_(false),
 {}
 
 void UctNode::CreateChild(int index) {
-    std::unique_ptr child(new UctNode());
+    std::unique_ptr<UctNode> child(new UctNode());
     child->parent_ = this;
     child_nodes_.push_back(std::move(child));
 
@@ -81,6 +82,11 @@ void UctNode::SetSimulated()
 void UctNode::SetEvaluated()
 {
     evaluated_ = true;
+}
+
+bool UctNode::GetEvaluated()
+{
+    return evaluated_;
 }
 
 std::vector<std::unique_ptr<UctNode>> UctNode::GetChildNodes()

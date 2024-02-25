@@ -42,13 +42,26 @@ torch::Device device(torch::kCPU);
 
 std::vector<std::vector<double>> win_table;
 
+int height = 64;
+int width = 16;
+int nChannel = 18;
+
+int policy_weight = 16;
+int policy_width = 32;
+int policy_rotation = 2;
+
+double dpi = 1/16;
+double m_to_inch = 1/0.0254;
+
+double one_over_to_tee = 1 / 38.405;
+
 // ストーンの座標からシートの画像のピクセルに変換する
 std::pair<int, int> PositionToPixel(dc::Vector2 position)
 {
     std::pair<int, int> pixel;
 
-    pixel.first = static_cast<int>(round((position.y - 32.004)/0.0254));
-    pixel.second = 93 - static_cast<int>(round(position.x/0.0254));
+    pixel.first = static_cast<int>(round((position.y - 32.004)*m_to_inch*dpi));
+    pixel.second = width/2 - static_cast<int>(round(position.x*m_to_inch*dpi));
 
     return pixel;
 }
@@ -61,7 +74,7 @@ dc::Vector2 PixelToVelocity(int i, int j)
         2.385, 2.39 , 2.395, 2.4  , 2.405, 2.41 , 2.415, 2.42 , 2.425,
         2.43 , 2.435, 2.44 , 2.445, 2.45 , 2.455, 2.46, 2.485, 2.51, 2.535, 2.56, 2.6, 2.8, 3. , 3.2, 3.4, 3.6, 3.8, 4.}};
 
-    return dc::Vector2(velocity_array[i] * std::sin(std::atan(-(j - 93) * 0.0254 / 38.405)), velocity_array[i] * std::cos(std::atan(-(j - 93) * 0.0254 / 38.405)));
+    return dc::Vector2(velocity_array[i] * std::sin(std::atan(-(j - policy_width/2) * 0.0254 * one_over_to_tee)), velocity_array[i] * std::cos(std::atan(-(j - policy_width/2) * 0.0254 * one_over_to_tee)));
 }
 
 // GameStateからモデルに入力する形式に変換する
@@ -117,7 +130,7 @@ std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game
 // ガードゾーン、ハウスに止まるショットと、シート上にあるストーンに干渉するショットのみを残す
 torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_setting)
 {
-    torch::Tensor filt = torch::zeros({2, 50, 12*15+7}).to("cpu");
+    torch::Tensor filt = torch::zeros({policy_rotation, policy_weight, policy_width}).to("cpu");
 
     int min_velocity = 1;
     if (game_state.shot+1 == game_state.kShotPerEnd) min_velocity = 13; // ラストショットはハウスに届かないショットを投げても意味がない

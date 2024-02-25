@@ -26,12 +26,14 @@ class UctNode
         void SetFilter(Torch::Tensor);
         void SetValue(float);
 
-        void SetEvaluatedResults();
+        void SetEvaluatedResults(Torch::Tensor, float);
 
         void SetSimulated();
         void SetEvaluated();
 
-        std::vector<std::unique_ptr<UctNode>> GetChildNodes();
+        bool GetEvaluated();
+
+        std::vector<UctNode*> GetChildNodes();
         std::vector<int> GetChildIndices();
 
     private:
