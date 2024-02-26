@@ -22,16 +22,18 @@ class UctNode
 
         void SetGameState(dc::GameState);
         dc::GameState GetGameState();
-        void SetPolicy(Torch::Tensor);
-        void SetFilter(Torch::Tensor);
+        void SetPolicy(torch::Tensor);
+        void SetFilter(torch::Tensor);
         void SetValue(float);
 
-        void SetEvaluatedResults(Torch::Tensor, float);
+        void SetEvaluatedResults(torch::Tensor, float);
 
         void SetSimulated();
         void SetEvaluated();
 
         bool GetEvaluated();
+
+        float GetValue();
 
         std::vector<UctNode*> GetChildNodes();
         std::vector<int> GetChildIndices();
@@ -40,14 +42,14 @@ class UctNode
         UctNode* parent_;
         dc::GameState       game_state_;
 
-        Torch::Tensor    policy_;
-        Torch::Tensor    filter_;
+        torch::Tensor    policy_;
+        torch::Tensor    filter_;
         float   value_;
 
         int visit_count_;
         float sum_value_;
 
-        std::vector<std::unique_ptr<UctNode>>    child_nodes_;
+        std::vector<UctNode*>    child_nodes_;
         // std::vector<int*>    child_visit_count_;
         // std::vector<float*>    child_sum_value_;
         std::vector<int>    child_move_indices_;

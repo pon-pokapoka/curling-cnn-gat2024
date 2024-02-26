@@ -7,6 +7,7 @@ child_nodes_(),
 child_move_indices_(),
 evaluated_(false),
 simulated_(false),
+value_(-1)
 {}
 
 void UctNode::CreateChild(int index) {
@@ -52,12 +53,12 @@ dc::GameState UctNode::GetGameState()
     return game_state_;
 }
 
-void UctNode::SetPolicy(Torch::Tensor policy)
+void UctNode::SetPolicy(torch::Tensor policy)
 {
     policy_ = policy;
 }
 
-void UctNode::SetFilter(Torch::Tensor filter)
+void UctNode::SetFilter(torch::Tensor filter)
 {
     filter_ = filter;
 }
@@ -67,7 +68,7 @@ void UctNode::SetValue(float value)
     value_ = value;
 }
 
-void UctNode::SetEvaluatedResults(Torch::Tensor policy, float value)
+void UctNode::SetEvaluatedResults(torch::Tensor policy, float value)
 {
     policy_ = policy;
     value_ = value;
@@ -87,6 +88,11 @@ void UctNode::SetEvaluated()
 bool UctNode::GetEvaluated()
 {
     return evaluated_;
+}
+
+float UctNode::GetValue()
+{
+    return value_;
 }
 
 std::vector<std::unique_ptr<UctNode>> UctNode::GetChildNodes()

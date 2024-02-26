@@ -8,8 +8,9 @@ int policy_weight = 16;
 int policy_width = 32;
 int policy_rotation = 2;
 
-void search(UctNode* current_node, std::vector<UctNode*> queue_evaluate)
+float search(UctNode* current_node, std::vector<UctNode*> queue_evaluate)
 {
+    float result = current_node->GetValue();
     // output = evaluate(current_node);
     // set_policy_value(current_node, output);
     // set_filter(current_node)
@@ -19,7 +20,7 @@ void search(UctNode* current_node, std::vector<UctNode*> queue_evaluate)
 
     auto indices = std::get<1>(torch::topk(torch::rand({1, policy_weight*policy_width*policy_rotation}) * filt.reshape({1, policy_weight*policy_width*policy_rotation}), 1));
 
-    child_indices = current_node->GetChildIndices();
+    auto child_indices = current_node->GetChildIndices();
 
     auto it = std::find(child_indices.begin(), child_indices.end(), indices.index({0, 0}).item<int>());
 
@@ -30,12 +31,24 @@ void search(UctNode* current_node, std::vector<UctNode*> queue_evaluate)
         SimulateMove(current_node, indices.index({0, 0}).item<int>(), child_indices.size());
 
         // queue child state
-        queue_evaluate.push_back(current_node->GetChild(child_indices.size()));
+        if (queue_evaluate.size() < nBatchSize){
+            queue_evaluate.push_back(current_node->GetChild(child_indices.size()));
+        };
     } else {
-        auto next_node = current_node->getChild(it - child_indices.begin());
+        auto next_node = current_node->GetChild(it - child_indices.begin());
+        result = next_node->GetValue();
 
-        if (next_node->GetEvaluated()) search(next_node, queue_evaluate);
+        // if (result != -1) updateNode(current_node, it - child_indices.begin(), result);
+
+        if (next_node->GetEvaluated() & (next_node->GetGameState().shot > 0)) result = search(next_node, queue_evaluate);
     }
+
+    return result;
+}
+
+
+void updateNode(UctNode* current_node, int child_id, float result){
+
 }
 
 
@@ -172,6 +185,7 @@ void EvaluateQueue(std::vector<UctNode*> queue)
         queue->SetEvaluatedResults(policy[i], value[i]);
     }
 
+    queue.clear()
 }
 
 
@@ -188,23 +202,28 @@ void OnMyTurn(dc::GameState const& game_state)
     torch::NoGradGuard no_grad; 
 
     // 現在の局面を評価
-    auto current_outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
+    auto current_outputs = EvaluateGameState(current_game_state, game_setting);
 
     auto policy = F::softmax(current_outputs->elements()[0].toTensor().reshape({1, 18700}).to(torch::kCPU), 1);
 
-    torch::Tensor filt = createFilter(current_game_state, g_game_setting);
+    // torch::Tensor filt = createFilter(current_game_state, g_game_setting);
 
     // root node
-    std::unique_ptr root_node(new UctNode());
-    root_node.SetGameState(current_game_state);
+    std::unique_ptr<UctNode> root_node(new UctNode());
+    root_node->SetGameState(current_game_state);
+    root_node->SetEvaluatedResults(torch::rand({1, policy_weight * policy_width * policy_rotation}), current_outputs[0]);
 
     std::vector<UctNode*> queue_evaluate;
 
-    for (int i=0; i<batch_size; ++i) {
-        search(root_node, queue_evaluate);
-    }
+    while ((now - start < limit)){
+        while (queue_evaluate.size() < nBatchSize) {
+            search(root_node, queue_evaluate);
+        }
 
-    EvaluateQueue();
+        EvaluateQueue();
+
+        // updateNode();
+    }
 }
 
 
