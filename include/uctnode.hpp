@@ -12,13 +12,16 @@ namespace dc = digitalcurling3;
 class UctNode
 {
     public:
+        typedef std::unique_ptr<UctNode> Ptr;
+
+    public:
         UctNode();
         void    CreateChild(int);
-        // void    expandChild();
+        void    expandChild(int);
         void    resetAsRoot();
-        void    removeChild(UctNode* child);
+        void    removeChild(Ptr child);
 
-        UctNode* GetChild(int);
+        Ptr GetChild(int);
 
         void SetGameState(dc::GameState);
         dc::GameState GetGameState();
@@ -35,7 +38,7 @@ class UctNode
 
         float GetValue();
 
-        std::vector<UctNode*> GetChildNodes();
+        std::vector<Ptr> GetChildNodes();
         std::vector<int> GetChildIndices();
 
     private:
@@ -49,7 +52,7 @@ class UctNode
         int visit_count_;
         float sum_value_;
 
-        std::vector<UctNode*>    child_nodes_;
+        std::vector<Ptr>    child_nodes_;
         // std::vector<int*>    child_visit_count_;
         // std::vector<float*>    child_sum_value_;
         std::vector<int>    child_move_indices_;
@@ -57,6 +60,6 @@ class UctNode
         bool    simulated_;
         bool    evaluated_;
 
-}
+};
 
 #endif // UCTNODE_HPP

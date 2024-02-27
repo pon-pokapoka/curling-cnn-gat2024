@@ -19,25 +19,25 @@ void UctNode::CreateChild(int index) {
 }
 
 void UctNode::expandChild(int childData) {
-    UctNode* newChild = new UctNode(childData);
-    addChild(newChild);
+//     std::unique_ptr<UctNode> newChild = new UctNode(childData);
+//     addChild(newChild);
 }
 
 void UctNode::resetAsRoot() {
-    if (parent != nullptr) {
-        parent->removeChild(this);
-        parent = nullptr;
+    // if (parent_ != nullptr) {
+    //     parent_->removeChild(this);
+    //     parent_ = nullptr;
+    // }
+}
+
+void UctNode::removeChild(std::unique_ptr<UctNode> child) {
+    auto it = std::find(child_nodes_.begin(), child_nodes_.end(), child);
+    if (it != child_nodes_.end()) {
+        child_nodes_.erase(it);
     }
 }
 
-void UctNode::removeChild(UctNode* child) {
-    auto it = std::find(childNodes.begin(), childNodes.end(), child);
-    if (it != childNodes.end()) {
-        childNodes.erase(it);
-    }
-}
-
-UctNode* UctNode::GetChild(int index)
+std::unique_ptr<UctNode> UctNode::GetChild(int index)
 {
     return child_nodes_[index];
 }

@@ -50,6 +50,8 @@ include_directories(include)
 # 実行ファイルを定義します
 add_executable(digitalcurling3_cnn  # 実行ファイルの名前はここの名前になります．なおプロジェクト名と一致させる必要はありません．
     main.cpp
+    src/skip.cpp
+    src/uctnode.cpp
     # ソースファイルやヘッダーファイルを追加する場合，ファイルを作成した後にファイル名をここに列挙します．
     # example.hpp
     # example.cpp

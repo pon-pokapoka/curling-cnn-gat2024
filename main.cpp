@@ -11,18 +11,19 @@
 #include <torch/csrc/api/include/torch/nn/functional/activation.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 
+#include "skip.hpp"
 #include "readcsv.hpp"
 
 
 namespace dc = digitalcurling3;
 namespace F = torch::nn::functional;
 
+
+namespace {
+
 const int nSimulation = 4; // 1つのショットに対する誤差を考慮したシミュレーション回数
 const int nBatchSize = 200; // CNNで推論するときのバッチサイズ
 const int nCandidate = 10000; // シミュレーションするショットの最大数。制限時間でシミュレーションできる数よりも十分大きく取る
-
-
-namespace {
 
 
 dc::Team g_team;  // 自身のチームID
@@ -42,147 +43,8 @@ torch::Device device(torch::kCPU);
 
 std::vector<std::vector<double>> win_table;
 
-int height = 64;
-int width = 16;
-int nChannel = 18;
-
-int policy_weight = 16;
-int policy_width = 32;
-int policy_rotation = 2;
-
-double dpi = 1/16;
-double m_to_inch = 1/0.0254;
-
-double one_over_to_tee = 1 / 38.405;
-
-// ストーンの座標からシートの画像のピクセルに変換する
-std::pair<int, int> PositionToPixel(dc::Vector2 position)
-{
-    std::pair<int, int> pixel;
-
-    pixel.first = static_cast<int>(round((position.y - 32.004)*m_to_inch*dpi));
-    pixel.second = width/2 - static_cast<int>(round(position.x*m_to_inch*dpi));
-
-    return pixel;
-}
-
-// policyの画像のピクセルからショットの速度に変換する
-dc::Vector2 PixelToVelocity(int i, int j)
-{
-    std::array<float, 50> velocity_array{{2.21, 2.22, 2.23, 2.24, 2.25, 2.26, 2.27, 2.28, 2.29, 2.3 ,
-        2.31, 2.32, 2.33, 2.34 , 2.345, 2.35 , 2.355, 2.36 , 2.365, 2.37 , 2.375, 2.38 ,
-        2.385, 2.39 , 2.395, 2.4  , 2.405, 2.41 , 2.415, 2.42 , 2.425,
-        2.43 , 2.435, 2.44 , 2.445, 2.45 , 2.455, 2.46, 2.485, 2.51, 2.535, 2.56, 2.6, 2.8, 3. , 3.2, 3.4, 3.6, 3.8, 4.}};
-
-    return dc::Vector2(velocity_array[i] * std::sin(std::atan(-(j - policy_width/2) * 0.0254 * one_over_to_tee)), velocity_array[i] * std::cos(std::atan(-(j - policy_width/2) * 0.0254 * one_over_to_tee)));
-}
-
-// GameStateからモデルに入力する形式に変換する
-std::vector<torch::jit::IValue> GameStateToInput(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
-{
-    std::vector<torch::jit::IValue> inputs;
-
-    torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), 2, 27*12+12, 12*15+7}).to(device);
-    torch::Tensor end = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
-    torch::Tensor score = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
-    torch::Tensor shot = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
-
-    for (size_t k=0; k < game_states.size(); ++k){
-        int i = static_cast<int>(k);
-        if (game_states[i].IsGameOver()) continue; // 試合終了していたらスキップ
-
-        shot.index({i, 0}) = (game_states[i].kShotPerEnd - game_states[i].shot) / 16.f;
-        score.index({i, 0}) = (static_cast<float>(game_states[i].GetTotalScore(game_states[i].hammer)) - static_cast<float>(game_states[i].GetTotalScore(dc::GetOpponentTeam(game_states[i].hammer)))) * 0.1f + 0.5f;
-        if (game_states[i].end < game_setting.max_end){
-            end.index({i, 0}) = (game_setting.max_end - game_states[i].end) / 10.f;
-        } else {
-            end.index({i, 0}) = 0.1f; // エキストラエンドは10エンドと同じ
-        }
-        // std::cout << game_states[i].kShotPerEnd << std::endl;
-        for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
-            auto const& stone = game_states[i].stones[static_cast<size_t>(dc::GetOpponentTeam(game_states[i].hammer))][team_stone_idx];
-            // std::cout << stone_nohammer->position.x << std::endl;
-            if (stone) {
-                std::pair <int, int> pixel = PositionToPixel(stone->position);
-                // std::cout << pixel << std::endl;
-                sheet.index({i, 0, pixel.first, pixel.second}) = 1;
-            }
-        }
-        for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
-            auto const& stone = game_states[i].stones[static_cast<size_t>(game_states[i].hammer)][team_stone_idx];
-            if (stone) {
-                std::pair <int, int> pixel = PositionToPixel(stone->position);
-                // std::cout << pixel << std::endl;
-                sheet.index({i, 1, pixel.first, pixel.second}) = 1;
-            }
-        }
-    }
-
-    inputs.push_back(sheet);
-    inputs.push_back(end);
-    inputs.push_back(score);
-    inputs.push_back(shot);
-
-    return inputs;
-}
-
 // policyのショットのうち効果のないショットを除くフィルターを作成
 // ガードゾーン、ハウスに止まるショットと、シート上にあるストーンに干渉するショットのみを残す
-torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_setting)
-{
-    torch::Tensor filt = torch::zeros({policy_rotation, policy_weight, policy_width}).to("cpu");
-
-    int min_velocity = 1;
-    if (game_state.shot+1 == game_state.kShotPerEnd) min_velocity = 13; // ラストショットはハウスに届かないショットを投げても意味がない
-
-    for (auto i=0; i < 50; ++i){
-        for (auto j=0; j < 187; ++j){
-            if ((min_velocity <= i) && (i < 37) && (j < 94)) filt.index({1, i, j}) = 1;
-            if ((min_velocity <= i) && (i < 37) && (j >= 93)) filt.index({0, i, j}) = 1;
-
-            if ((i < 37) && (j < 139)) filt.index({0, i, j}) = 0; // block side guard
-            if ((i < 37) && (j >= 48)) filt.index({1, i, j}) = 0;
-        }
-    }
-
-
-    for (size_t team_stone_idx = 0; team_stone_idx < game_state.kShotPerEnd / 2; ++team_stone_idx) {
-        auto const& stone_hammer = game_state.stones[static_cast<size_t>(game_state.hammer)][team_stone_idx];
-        auto const& stone_nohammer = game_state.stones[static_cast<size_t>(dc::GetOpponentTeam(game_state.hammer))][team_stone_idx];
-        if (stone_hammer) {
-            std::pair <int, int> pixel = PositionToPixel(stone_hammer->position);
-            // std::cout << pixel << std::endl;
-            for (auto i=0; i < 50; ++i){
-                for (auto j=0; j < 187; ++j){
-                    if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
-                        filt.index({1, i, j}) = 1;
-                    }
-                    if ((-4*(i - 50) <= j - (187 - (pixel.second - (pixel.first - 252)/20))) && (-4*(i - 50) >= j - (187 - (pixel.second - (pixel.first - 252)/20 - 40)))) {
-                        filt.index({0, i, j}) = 1;
-                    }
-                }
-            }
-        }
-        if (stone_nohammer) {
-            std::pair <int, int> pixel = PositionToPixel(stone_nohammer->position);
-            // std::cout << pixel << std::endl;
-            for (auto i=0; i < 50; ++i){
-                for (auto j=0; j < 187; ++j){
-                    if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
-                        filt.index({1, i, j}) = 1;
-                    }
-                    if ((-4*(i - 50) <= j - (187 - (pixel.second - (pixel.first - 252)/20))) && (-4*(i - 50) >= j - (187 - (pixel.second - (pixel.first - 252)/20 - 40)))) {
-                        filt.index({0, i, j}) = 1;
-                    }
-                }
-            }
-        }
-    }
-
-    return filt;
-}
-
-
 /// \brief サーバーから送られてきた試合設定が引数として渡されるので，試合前の準備を行います．
 ///
 /// 引数 \p player_order を編集することでプレイヤーのショット順を変更することができます．各プレイヤーの情報は \p player_factories に格納されています．
@@ -339,143 +201,9 @@ void OnInit(
 dc::Move OnMyTurn(dc::GameState const& game_state)
 {
     // TODO AIを作る際はここを編集してください
-    auto start = std::chrono::system_clock::now();
+    Skip skip(module, g_game_setting, g_simulators);
 
-    dc::GameState current_game_state = game_state;
-
-    // std::cout << (current_game_state.kShotPerEnd - current_game_state.shot) / 16.f << std::endl;
-    // std::cout << (static_cast<float>(current_game_state.GetTotalScore(current_game_state.hammer)) - static_cast<float>(current_game_state.GetTotalScore(dc::GetOpponentTeam(current_game_state.hammer)))) * 0.1f + 0.5f << std::endl;
-    // std::cout << (g_game_setting.max_end - current_game_state.end) / 10.f << std::endl;
-
-    // auto inputs = GameStateToInput({current_game_state}, g_game_setting);
-
-    // std::cout << inputs[1] << "  " << inputs[2] << "   " << inputs[3] << std::endl;
-    // for (auto i=0; i < 12*28; ++i){
-    //     for (auto j=0; j < 187; ++j){
-    //         if (inputs[0].toTensor()[0][0][i][j].item<int>() + inputs[0].toTensor()[0][1][i][j].item<int>() > 0) std::cout << i << "  " << j << std::endl;
-    //     }
-    // }    
-
-    torch::NoGradGuard no_grad; 
-
-    // 現在の局面を評価
-    auto current_outputs = module.forward(GameStateToInput({current_game_state}, g_game_setting)).toTuple();
-
-    auto policy = F::softmax(current_outputs->elements()[0].toTensor().reshape({1, 18700}).to(torch::kCPU), 1);
-
-    torch::Tensor filt = createFilter(current_game_state, g_game_setting);
-
-
-    // 候補ショット用の変数
-    std::array<int, nCandidate> indices_copy;
-    std::array<dc::moves::Shot, nCandidate> shots;
-    std::array<dc::Vector2, nCandidate> velocity;
-
-    if (current_game_state.shot < 0){ // random shot 
-        auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), 1));
-
-        int i = 0;
-        indices_copy[i] = indices.index({0, i}).item<int>();
-        velocity[i] = PixelToVelocity(indices_copy[i] % (50 * (12*15+7)) / (12*15+7), indices_copy[i] % (50 * (12*15+7)) % (12*15+7));
-
-        if (indices_copy[i] / (50 * (12*15+7)) == 0) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCW};
-        else if (indices_copy[i] / (50 * (12*15+7)) == 1) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCCW};
-        else std::cerr << "shot error!";
-
-        return shots[i];
-    } else {
-
-        // int idx = torch::argmax(policy[0]).item().to<int>();
-        // int idx = torch::argmax(torch::rand({2, 50, 187})).item().to<int>();
-        // auto indices = std::get<1>(torch::topk((policy + torch::randn({1, 18700}) * 2e-4) * filt.reshape({1, 18700}), nCandidate)); // policy + random
-        auto indices = std::get<1>(torch::topk(torch::rand({1, 18700}) * filt.reshape({1, 18700}), nCandidate)); // random choose
-
-        // std::cout << idx << std::endl;
-
-
-        // policyからショットに変換
-        #pragma omp parallel for
-        for (auto i = 0; i < nCandidate; ++i) {   
-            indices_copy[i] = indices.index({0, i}).item<int>();
-            velocity[i] = PixelToVelocity(indices_copy[i] % (50 * (12*15+7)) / (12*15+7), indices_copy[i] % (50 * (12*15+7)) % (12*15+7));
-
-            if (indices_copy[i] / (50 * (12*15+7)) == 0) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCW};
-            else if (indices_copy[i] / (50 * (12*15+7)) == 1) shots[i] = {velocity[i], dc::moves::Shot::Rotation::kCCW};
-            else std::cerr << "shot error!";
-        }
-
-
-        auto & current_player = *g_players[game_state.shot / 4];
-
-        g_simulator->Save(*g_simulator_storage);
-
-        std::vector<dc::GameState> temp_game_states;
-        temp_game_states.resize(nBatchSize);
-        std::array<dc::Move, nBatchSize> temp_moves;
-
-        torch::Tensor prob_ave = torch::zeros({nCandidate});
-
-        int count = 0;
-        auto now = std::chrono::system_clock::now();
-        // すべての候補ショットをシミュレーションするか、考慮時間制限を過ぎるまで繰り返す
-        while ((count < nCandidate * nSimulation) && (now - start < limit)){
-            // ショットのシミュレーション
-            #pragma omp parallel for
-            for (auto i = 0; i < nBatchSize; ++i) {
-                temp_game_states[i] = current_game_state;
-                temp_moves[i] = shots[(count + i)/nSimulation];
-                g_simulators[i]->Load(*g_simulator_storage);
-
-                dc::ApplyMove(g_game_setting, *g_simulators[i],
-                    current_player, temp_game_states[i], temp_moves[i], std::chrono::milliseconds(0));
-            }
-
-            // シミュレーション後の局面を評価
-            auto outputs = module.forward(GameStateToInput(temp_game_states, g_game_setting)).toTuple();
-
-            torch::Tensor prob = torch::sigmoid(outputs->elements()[1].toTensor().to(torch::kCPU));
-
-            // std::cout << inputs[1] << inputs[2] << inputs[3] << std::endl;
-
-            // CNNは後攻の勝率を返すので、先行の場合には反転
-            if (g_team != current_game_state.hammer) prob = torch::ones({prob.sizes()[0], 1})-prob;
-
-            // ラストショットの場合にはシミュレーション後に次のエンドか試合終了になってしまうので対処が必要
-            if (current_game_state.shot+1 == current_game_state.kShotPerEnd){
-                for (auto i=0; i < nBatchSize; ++i){
-                    if (temp_game_states[i].IsGameOver()){
-                        // 試合終了の場合は勝利かどうかを返す
-                        prob.index({i, 0}) = g_team == temp_game_states[i].game_result->winner;
-                    } else if (temp_game_states[i].hammer == dc::GetOpponentTeam(g_team)) {
-                        // 次のエンド先攻になる場合は勝率を反転
-                        prob.index({i, 0}) = 1 - prob.index({i, 0});
-                    }
-
-                    // std::cout << dc::ToString(temp_game_states[i].hammer) << "  " << prob.index({i, 0}).item() << std::endl;
-                }
-            }
-
-            // 同じショットに対する誤差を考慮した複数回のシミュレーションで勝率を平均
-            for (auto i=0; i < nBatchSize / nSimulation; ++i){
-                prob_ave[count/nSimulation+i] = torch::mean(prob.reshape({nBatchSize / nSimulation, nSimulation}), 1)[i];
-            }
-
-            count += nBatchSize;
-            now = std::chrono::system_clock::now();
-        }
-
-        auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
-        std::cout << count << " simulations in " << msec << "msec" << std::endl;
-
-        // for (auto i=0; i < 8; ++i){
-        //     std::cout << indices[0][i].item() << "   " << prob_ave[i].item<float>() << std::endl;
-        // }
-
-        return shots[torch::argmax(prob_ave).item().to<int>()];
-    }
-
-    // コンシードを行う場合
-    // return dc::moves::Concede();
+    return skip.command(game_state);
 }
 
 
