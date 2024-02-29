@@ -19,7 +19,7 @@ class UctNode
         void    CreateChild(int);
         void    expandChild(int);
         void    resetAsRoot();
-        void    removeChild(Ptr child);
+        void    removeChild(Ptr);
 
         Ptr GetChild(int);
 

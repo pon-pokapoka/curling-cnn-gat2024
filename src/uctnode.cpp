@@ -39,7 +39,7 @@ void UctNode::removeChild(std::unique_ptr<UctNode> child) {
 
 std::unique_ptr<UctNode> UctNode::GetChild(int index)
 {
-    return child_nodes_[index];
+    return std::move(child_nodes_[index]);
 }
 
 void UctNode::SetGameState(dc::GameState game_state)
@@ -97,7 +97,7 @@ float UctNode::GetValue()
 
 std::vector<std::unique_ptr<UctNode>> UctNode::GetChildNodes()
 {
-    return child_nodes_;
+    return std::move(child_nodes_);
 }
 
 std::vector<int> UctNode::GetChildIndices()

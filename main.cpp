@@ -21,10 +21,6 @@ namespace F = torch::nn::functional;
 
 namespace {
 
-const int nSimulation = 4; // 1つのショットに対する誤差を考慮したシミュレーション回数
-const int nBatchSize = 200; // CNNで推論するときのバッチサイズ
-const int nCandidate = 10000; // シミュレーションするショットの最大数。制限時間でシミュレーションできる数よりも十分大きく取る
-
 
 dc::Team g_team;  // 自身のチームID
 
@@ -100,7 +96,7 @@ void OnInit(
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
         std::cout << "model loading..." << std::endl;
-        module = torch::jit::load("model/traced_curling_cnn_gat2023.pt", device);
+        module = torch::jit::load("model/traced_curling_shotpyshot_v2_score-008.pt", device);
         std::cout << "model loaded" << std::endl;
     }
     catch (const c10::Error& e) {
@@ -113,30 +109,30 @@ void OnInit(
     for (auto i = 0; i < 10; ++i) {
         std::cout << ".\n";
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(torch::rand({nBatchSize, 2, 27*12+12, 12*15+7}).to(device));
-        inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
-        inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
-        inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
+        inputs.push_back(torch::rand({nBatchSize, 18, 64, 16}).to(device));
+        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
+        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
+        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
 
         // Execute the model and turn its output into a tensor.
-        auto outputs = module.forward(inputs).toTuple();
-        torch::Tensor out1 = outputs->elements()[0].toTensor().to(torch::kCPU);
-        torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
-        torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
+        auto outputs = module.forward(inputs).toTensor();
+        torch::Tensor out1 = outputs.to(torch::kCPU);
+        // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
+        // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
     }
     for (auto i = 0; i < 10; ++i) {
         std::cout << ".\n";
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(torch::rand({1, 2, 27*12+12, 12*15+7}).to(device));
-        inputs.push_back(torch::rand({1, 1}).to(device));
-        inputs.push_back(torch::rand({1, 1}).to(device));
-        inputs.push_back(torch::rand({1, 1}).to(device));
+        inputs.push_back(torch::rand({1, 18, 64, 16}).to(device));
+        // inputs.push_back(torch::rand({1, 1}).to(device));
+        // inputs.push_back(torch::rand({1, 1}).to(device));
+        // inputs.push_back(torch::rand({1, 1}).to(device));
 
         // Execute the model and turn its output into a tensor.
-        auto outputs = module.forward(inputs).toTuple();
-        torch::Tensor out1 = outputs->elements()[0].toTensor().to(torch::kCPU);
-        torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
-        torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
+        auto outputs = module.forward(inputs).toTensor();
+        torch::Tensor out1 = outputs.to(torch::kCPU);
+        // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
+        // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
     }
     c10::cuda::CUDACachingAllocator::emptyCache();
 
@@ -201,7 +197,7 @@ void OnInit(
 dc::Move OnMyTurn(dc::GameState const& game_state)
 {
     // TODO AIを作る際はここを編集してください
-    Skip skip(module, g_game_setting, g_simulators);
+    Skip skip(module, g_game_setting, std::move(g_simulators), std::move(g_players), limit, win_table, device);
 
     return skip.command(game_state);
 }

@@ -54,7 +54,7 @@ namespace utility
     };
 
     // GameStateからモデルに入力する形式に変換する
-    ModelInput GameStateToInput(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
+    ModelInput GameStateToInput(std::vector<dc::GameState> game_states, dc::GameSetting game_setting, torch::Device device)
     {
         std::vector<torch::jit::IValue> inputs;
 
