@@ -49,40 +49,81 @@ namespace utility
     class ModelInput {
         public:
             std::vector<torch::jit::IValue> inputs;
-            torch::Tensor end;
-            torch::Tensor score;
+            std::vector<int> end;
+            std::vector<int> score;
+
+            ModelInput to(torch::Device device) {
+                ModelInput model_input;
+                std::vector<torch::jit::IValue> inputs_copy;
+
+                for (auto input: inputs){
+                    inputs_copy.push_back(input.toTensor().to(device));
+                }
+
+                model_input.inputs = inputs_copy;
+                model_input.end = end;
+                model_input.score = score;
+
+                return model_input;
+
+            }
     };
 
     // GameStateからモデルに入力する形式に変換する
-    ModelInput GameStateToInput(std::vector<dc::GameState> game_states, dc::GameSetting game_setting, torch::Device device)
+    ModelInput GameStateToInput(std::vector<dc::GameState> const game_states, dc::GameSetting game_setting, torch::Device device)
     {
-        std::vector<torch::jit::IValue> inputs;
+        // auto start = std::chrono::system_clock::now();
+        // auto now = std::chrono::system_clock::now();
 
-        torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), nChannel, height, width}).to(device);
-        torch::Tensor end = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
-        torch::Tensor score = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
+        
+        std::vector<torch::jit::IValue> inputs;
+        int const size = static_cast<int>(game_states.size());
+
+        // torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), nChannel, height, width}).to(device);
+        std::vector<std::array<std::array<std::array<float, width>, height>, nChannel>> sheet_array;
+        sheet_array.resize(size);
+        std::vector<int> end(size, 0);
+        std::vector<int> score(size, 0);
         // torch::Tensor shot = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
 
-        for (size_t k=0; k < game_states.size(); ++k){
-            int i = static_cast<int>(k);
+        for (auto i=0; i < size; ++i){
             if (game_states[i].IsGameOver()) continue; // 試合終了していたらスキップ
 
             // shot.index({i, 0}) = (game_states[i].kShotPerEnd - game_states[i].shot) / 16.f;
-            score.index({i, 0}) = (static_cast<float>(game_states[i].GetTotalScore(game_states[i].hammer)) - static_cast<float>(game_states[i].GetTotalScore(dc::GetOpponentTeam(game_states[i].hammer))));
+            score[i] = (game_states[i].GetTotalScore(game_states[i].hammer) - game_states[i].GetTotalScore(dc::GetOpponentTeam(game_states[i].hammer)));
             if (game_states[i].end < game_setting.max_end){
-                end.index({i, 0}) = game_states[i].end;
+                end[i] = game_states[i].end;
             } else {
-                end.index({i, 0}) = 10; // エキストラエンドは10エンドと同じ
+                end[i] = 10; // エキストラエンドは10エンドと同じ
             }
             // std::cout << game_states[i].kShotPerEnd << std::endl;
+            // now = std::chrono::system_clock::now();
+            // std::cout << "Input: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+
             
             for (auto l=0; l <= game_states[i].shot; ++l){
                 for (auto n=0; n < height; ++n){
                     for (auto m=0; m < width; ++m){
-                        sheet.index({i, l+2, n, m}) = 1;
+                        sheet_array[i][l+2][n][m] = 1;
                     }
                 }  
             }
+            for (auto l=game_states[i].shot+1; l < game_states[i].kShotPerEnd; ++l){
+                for (auto n=0; n < height; ++n){
+                    for (auto m=0; m < width; ++m){
+                        sheet_array[i][l+2][n][m] = 1;
+                    }
+                }  
+            }
+            for (auto l=0; l < 2; ++l){
+                for (auto n=0; n < height; ++n){
+                    for (auto m=0; m < width; ++m){
+                        sheet_array[i][l][n][m] = 1;
+                    }
+                }  
+            }
+            // now = std::chrono::system_clock::now();
+            // std::cout << "Input: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
             for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
                 auto const& stone = game_states[i].stones[static_cast<size_t>(dc::GetOpponentTeam(game_states[i].hammer))][team_stone_idx];
@@ -90,7 +131,7 @@ namespace utility
                 if (stone) {
                     std::pair <int, int> pixel = PositionToPixel(stone->position);
                     // std::cout << pixel << std::endl;
-                    sheet.index({i, 0, pixel.first, pixel.second}) = 1;
+                    sheet_array[i][0][pixel.first][pixel.second] = 1;
                 }
             }
             for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
@@ -98,10 +139,14 @@ namespace utility
                 if (stone) {
                     std::pair <int, int> pixel = PositionToPixel(stone->position);
                     // std::cout << pixel << std::endl;
-                    sheet.index({i, 1, pixel.first, pixel.second}) = 1;
+                    sheet_array[i][1][pixel.first][pixel.second] = 1;
                 }
             }
         }
+        torch::Tensor sheet = torch::from_blob(sheet_array.data(), {size, nChannel, height, width}, device);
+
+        // now = std::chrono::system_clock::now();
+        // std::cout << "Input: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
         inputs.push_back(sheet);
         // inputs.push_back(end);

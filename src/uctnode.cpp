@@ -11,35 +11,37 @@ value_(-1)
 {}
 
 void UctNode::CreateChild(int index) {
-    std::unique_ptr<UctNode> child(new UctNode());
+    std::shared_ptr<UctNode> child(new UctNode());
     child->parent_ = this;
     child_nodes_.push_back(std::move(child));
 
     child_move_indices_.push_back(index);
 }
 
-void UctNode::expandChild(int childData) {
-//     std::unique_ptr<UctNode> newChild = new UctNode(childData);
+// void UctNode::expandChild(int childData) {
+//     std::shared_ptr<UctNode> newChild = new UctNode(childData);
 //     addChild(newChild);
-}
+// }
 
-void UctNode::resetAsRoot() {
+// void UctNode::resetAsRoot() {
     // if (parent_ != nullptr) {
     //     parent_->removeChild(this);
     //     parent_ = nullptr;
     // }
-}
+// }
 
-void UctNode::removeChild(std::unique_ptr<UctNode> child) {
-    auto it = std::find(child_nodes_.begin(), child_nodes_.end(), child);
-    if (it != child_nodes_.end()) {
-        child_nodes_.erase(it);
-    }
-}
+// void UctNode::removeChild(std::shared_ptr<UctNode> child) {
+//     auto it = std::find(child_nodes_.begin(), child_nodes_.end(), child);
+//     if (it != child_nodes_.end()) {
+//         child_nodes_.erase(it);
+//     }
+// }
 
-std::unique_ptr<UctNode> UctNode::GetChild(int index)
+std::shared_ptr<UctNode> UctNode::GetChild(int index)
 {
-    return std::move(child_nodes_[index]);
+    auto it = std::find(child_move_indices_.begin(), child_move_indices_.end(), index);
+
+    return child_nodes_[it - child_move_indices_.begin()];
 }
 
 void UctNode::SetGameState(dc::GameState game_state)
@@ -95,7 +97,7 @@ float UctNode::GetValue()
     return value_;
 }
 
-std::vector<std::unique_ptr<UctNode>> UctNode::GetChildNodes()
+std::vector<std::shared_ptr<UctNode>> UctNode::GetChildNodes()
 {
     return std::move(child_nodes_);
 }

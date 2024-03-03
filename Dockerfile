@@ -1,7 +1,8 @@
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 SHELL ["/bin/bash", "-c"]
-RUN apt update && apt install -y cmake git libboost1.74-dev libboost-date-time1.74-dev libboost-regex1.74-dev libicu-dev ninja-build unzip wget\
+RUN apt update && apt install -y cmake gdb git libboost1.74-dev libboost-date-time1.74-dev libboost-regex1.74-dev libicu-dev ninja-build unzip wget\
+libcusparselt0 libcusparselt-dev\
     && rm -rf /var/lib/apt/lists/*
 
 ARG TORCH_VERSION=2.2.0

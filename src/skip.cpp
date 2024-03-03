@@ -16,19 +16,29 @@ int policy_weight = 16;
 int policy_width = 32;
 int policy_rotation = 2;
 
-Skip::Skip(torch::jit::script::Module module, dc::GameSetting g_game_setting, std::array<std::unique_ptr<dc::ISimulator>, nBatchSize> g_simulators, std::array<std::unique_ptr<dc::IPlayer>, 4> g_players, std::chrono::duration<double> limit,
+Skip::Skip(torch::jit::script::Module module, dc::GameSetting g_game_setting, std::array<std::shared_ptr<dc::ISimulator>, nLoop> g_simulators, std::array<std::shared_ptr<dc::IPlayer>, 4> g_players, std::chrono::duration<double> limit,
 std::vector<std::vector<double>> win_table,
 torch::Device device) : module(module),
 g_game_setting(g_game_setting),
-g_simulators(std::move(g_simulators)),
-g_players(std::move(g_players)),
+g_simulators(g_simulators),
+g_players(g_players),
 limit(limit),
 win_table(win_table),
 device(device),
-queue_evaluate()
-{}
+queue_evaluate(),
+queue_simulate(),
+queue_create_child(),
+queue_create_child_index(),
+flag_create_child(),
+temp_game_states()
+{
+    #pragma omp parallel for
+    for (auto i=0; i < nLoop; ++i) {
+        flag_create_child[i] = false;
+    }
+}
 
-float Skip::search(std::unique_ptr<UctNode> current_node)
+float Skip::search(std::shared_ptr<UctNode> current_node, int k)
 {
     float result = current_node->GetValue();
     // output = evaluate(current_node);
@@ -45,93 +55,109 @@ float Skip::search(std::unique_ptr<UctNode> current_node)
     auto it = std::find(child_indices.begin(), child_indices.end(), indices.index({0, 0}).item<int>());
 
     if (it == child_indices.end()) {
-        
-        current_node->CreateChild(indices.index({0, 0}).item<int>());
+        queue_create_child[k] = current_node;
+        queue_create_child_index[k] = indices.index({0, 0}).item<int>();
+        flag_create_child[k] = true;
+        SimulateMove(current_node, queue_create_child_index[k], k);
 
-        SimulateMove(std::move(current_node), indices.index({0, 0}).item<int>(), child_indices.size());
-
-        // queue child state
-        if (queue_evaluate.size() < nBatchSize){
-            queue_evaluate.push_back(current_node->GetChild(child_indices.size()));
-        };
     } else {
-        auto next_node = current_node->GetChild(it - child_indices.begin());
-        result = next_node->GetValue();
+        auto next_node = current_node->GetChild(indices.index({0, 0}).item<int>());
+        if (next_node->GetEvaluated()) result = next_node->GetValue();
 
         // if (result != -1) updateNode(current_node, it - child_indices.begin(), result);
 
-        if (next_node->GetEvaluated() & (next_node->GetGameState().shot > 0)) result = search(std::move(next_node));
+        if (next_node->GetEvaluated() & (next_node->GetGameState().shot > 0)) result = search(next_node, k);
     }
 
     return result;
 }
 
 
-void Skip::updateNode(std::unique_ptr<UctNode> current_node, int child_id, float result){
+void Skip::updateNode(std::shared_ptr<UctNode> current_node, int child_id, float result){
 
 }
 
 
 
-void Skip::SimulateMove(std::unique_ptr<UctNode> current_node, int index, int n_children)
+void Skip::SimulateMove(std::shared_ptr<UctNode> current_node, int index, int k)
 {
-    dc::GameState temp_game_state;
-    dc::Move temp_moves;
-    dc::moves::Shot shots;
+    dc::Move temp_move;
+    dc::moves::Shot shot;
     dc::Vector2 velocity;
 
 
-    temp_game_state = current_node->GetGameState();
+    temp_game_states[k] = current_node->GetGameState();
 
     velocity = utility::PixelToVelocity(index % (policy_weight * policy_width) / policy_width, index % (policy_weight * policy_width) % policy_width);
 
-    if (index / (policy_weight * policy_width) == 0) shots = {velocity, dc::moves::Shot::Rotation::kCW};
-    else if (index / (policy_weight * policy_width) == 1) shots = {velocity, dc::moves::Shot::Rotation::kCCW};
+    if (index / (policy_weight * policy_width) == 0) shot = {velocity, dc::moves::Shot::Rotation::kCW};
+    else if (index / (policy_weight * policy_width) == 1) shot = {velocity, dc::moves::Shot::Rotation::kCCW};
     else std::cerr << "shot error!";
 
-    auto & current_player = *g_players[temp_game_state.shot / 4];
+    auto & current_player = *g_players[temp_game_states[k].shot / 4];
+    temp_move = shot;
 
-    dc::ApplyMove(g_game_setting, *g_simulators[0],
-        current_player, temp_game_state, temp_moves, std::chrono::milliseconds(0));
+    dc::ApplyMove(g_game_setting, *g_simulators[k],
+        current_player, temp_game_states[k], temp_move, std::chrono::milliseconds(0));
 
-    current_node->GetChild(n_children)->SetGameState(temp_game_state);
 }
 
 
 torch::Tensor Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
 {   
-    utility::ModelInput model_input = utility::GameStateToInput(game_states, game_setting, device);
+    auto start = std::chrono::system_clock::now();
+    auto now = std::chrono::system_clock::now();
 
-    auto outputs = module.forward(model_input.inputs).toTensor().to(torch::kCPU);
+    utility::ModelInput model_input = utility::GameStateToInput(game_states, game_setting, torch::kCPU);
+    now = std::chrono::system_clock::now();
+    std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+
+
+
+
+    auto outputs = module.forward(model_input.to(device).inputs).toTensor().to(torch::kCPU);
+    now = std::chrono::system_clock::now();
+    std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+
 
     torch::Tensor win_rate = torch::zeros({game_states.size(), game_states[0].kShotPerEnd+1}).to(torch::kCPU);
 
     for (auto n=0; n < game_states.size(); ++n){    
         for (auto i=0; i < game_states[n].kShotPerEnd+1; ++i){
-            int scorediff_after_end = model_input.score.index({n, 0}).item<int>() + i - game_states[n].kShotPerEnd/2;
+            int scorediff_after_end = model_input.score[n] + i - game_states[n].kShotPerEnd/2;
             if (scorediff_after_end > 9) scorediff_after_end = 9;
             else if (scorediff_after_end < -9) scorediff_after_end = -9;
 
-            win_rate.index({n, i}) = win_table[scorediff_after_end+9][model_input.end.index({n, 0}).item<int>()];
+            win_rate.index({n, i}) = win_table[scorediff_after_end+9][model_input.end[n]];
         }
     }
+    now = std::chrono::system_clock::now();
+    std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+
 
     torch::Tensor win_prob = at::sum(F::softmax(outputs, 1) * win_rate, 1).to(torch::kCPU);
+    now = std::chrono::system_clock::now();
+    std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+
 
     return win_prob;
 }
 
 
 void Skip::EvaluateQueue()
-{
+{       
+  
     std::vector<dc::GameState> game_states;
     game_states.resize(queue_evaluate.size());
 
+    #pragma omp parallel for
     for (int i=0; i<queue_evaluate.size(); ++i) {
         game_states[i] = queue_evaluate[i]->GetGameState();
     }
 
+
     torch::Tensor value = EvaluateGameState(game_states, g_game_setting).to(torch::kCPU);
+
 
     torch::Tensor policy = torch::rand({queue_evaluate.size(), policy_weight * policy_width * policy_rotation}).to(torch::kCPU);
     // torch::Tensor value = torch::rand({queue_evaluate.size()});
@@ -139,7 +165,6 @@ void Skip::EvaluateQueue()
     for (int i=0; i<queue_evaluate.size(); ++i) {
         queue_evaluate[i]->SetEvaluatedResults(policy[i], value[i].item<float>());
     }
-
     queue_evaluate.clear();
 }
 
@@ -161,22 +186,53 @@ dc::Move Skip::command(dc::GameState const& game_state)
     // torch::Tensor filt = createFilter(current_game_state, g_game_setting);
 
     // root node
-    std::unique_ptr<UctNode> root_node(new UctNode());
+    std::shared_ptr<UctNode> root_node(new UctNode());
     root_node->SetGameState(current_game_state);
     root_node->SetEvaluatedResults(torch::rand({1, policy_weight * policy_width * policy_rotation}), current_outputs.index({0}).item<float>());
 
-
-
-    auto now = std::chrono::system_clock::now();    while ((now - start < limit)){
-        while (queue_evaluate.size() < nBatchSize) {
-            search(std::move(root_node));
+    int count = 0;
+    auto now = std::chrono::system_clock::now();
+    while ((now - start < limit)){
+        // while (queue_evaluate.size() < nBatchSize) {
+        #pragma omp parallel for
+        for (auto i = 0; i < nLoop; ++i) {
+            // std::cout << i << "  ";
+            search(root_node, i);
+            if (std::accumulate(std::begin(flag_create_child), std::end(flag_create_child), 0) >= nBatchSize) continue;
+        }
+        now = std::chrono::system_clock::now();
+        std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+        
+        for (auto i = 0; i < nLoop; ++i) {
+            if (flag_create_child[i]) {
+                queue_create_child[i]->CreateChild(queue_create_child_index[i]);
+                queue_create_child[i]->GetChild(queue_create_child_index[i])->SetGameState(temp_game_states[i]);
+                if (queue_evaluate.size() < nBatchSize) {
+                    queue_evaluate.push_back(queue_create_child[i]->GetChild(queue_create_child_index[i]));
+                }
+            }
         }
 
+        for (auto& ptr : queue_create_child) {
+            ptr.reset();
+        }
+        #pragma omp parallel for
+        for (auto i=0; i < nLoop; ++i) {
+            flag_create_child[i] = false;
+        }
+
+
+        count += queue_evaluate.size();
         EvaluateQueue();
 
         // updateNode();
+        now = std::chrono::system_clock::now();
     }
 
-    return dc::moves::Concede();
+    auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+    std::cout << count << " simulations in " << msec << " msec" << std::endl;
+    dc::moves::Shot shot = {utility::PixelToVelocity(8, 8), dc::moves::Shot::Rotation::kCCW};
+    dc::Move move = shot;
+    return move;
 }
 

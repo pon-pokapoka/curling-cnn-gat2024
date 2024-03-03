@@ -29,9 +29,9 @@ torch::jit::script::Module module; // モデル
 // シミュレーション用変数
 dc::GameSetting g_game_setting;
 std::unique_ptr<dc::ISimulator> g_simulator;
-std::array<std::unique_ptr<dc::ISimulator>, nBatchSize> g_simulators;
+std::array<std::shared_ptr<dc::ISimulator>, nLoop> g_simulators;
 std::unique_ptr<dc::ISimulatorStorage> g_simulator_storage;
-std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
+std::array<std::shared_ptr<dc::IPlayer>, 4> g_players;
 
 std::chrono::duration<double> limit; // 考慮時間制限
 
@@ -107,7 +107,7 @@ void OnInit(
     // 使うバッチサイズすべてで行っておく
     std::cout << "initial inference\n";
     for (auto i = 0; i < 10; ++i) {
-        std::cout << ".\n";
+        std::cout << ".";
         std::vector<torch::jit::IValue> inputs;
         inputs.push_back(torch::rand({nBatchSize, 18, 64, 16}).to(device));
         // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
@@ -120,8 +120,9 @@ void OnInit(
         // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
         // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
     }
+    std::cout << "\n";
     for (auto i = 0; i < 10; ++i) {
-        std::cout << ".\n";
+        std::cout << ".";
         std::vector<torch::jit::IValue> inputs;
         inputs.push_back(torch::rand({1, 18, 64, 16}).to(device));
         // inputs.push_back(torch::rand({1, 1}).to(device));
@@ -135,12 +136,13 @@ void OnInit(
         // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
     }
     c10::cuda::CUDACachingAllocator::emptyCache();
+    std::cout << "\n";
 
     // シミュレータFCV1Lightを使用する．
     g_team = team;
     g_game_setting = game_setting;
     g_simulator = dc::simulators::SimulatorFCV1LightFactory().CreateSimulator();
-    for (unsigned i = 0; i < nBatchSize; ++i) {
+    for (unsigned i = 0; i < nLoop; ++i) {
         g_simulators[i] = dc::simulators::SimulatorFCV1LightFactory().CreateSimulator();
     }
     g_simulator_storage = g_simulator->CreateStorage();
@@ -165,7 +167,7 @@ void OnInit(
     // しなくて良い
     std::cout << "initial simulation\n";
     for (auto j = 0; j < 10; ++j) {
-        std::cout << ".\n";
+        std::cout << ".";
         dc::GameState dummy_game_state(g_game_setting);
         std::array<dc::GameState, nBatchSize> dummy_game_states; 
         std::array<dc::Move, nBatchSize> dummy_moves;
@@ -184,6 +186,7 @@ void OnInit(
                 dummy_player, dummy_game_states[i], dummy_moves[i], std::chrono::milliseconds(0));
         }
     }
+    std::cout << "\n";
 }
 
 
@@ -197,7 +200,7 @@ void OnInit(
 dc::Move OnMyTurn(dc::GameState const& game_state)
 {
     // TODO AIを作る際はここを編集してください
-    Skip skip(module, g_game_setting, std::move(g_simulators), std::move(g_players), limit, win_table, device);
+    Skip skip(module, g_game_setting, g_simulators, g_players, limit, win_table, device);
 
     return skip.command(game_state);
 }

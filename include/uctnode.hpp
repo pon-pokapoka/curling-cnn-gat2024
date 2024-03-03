@@ -12,14 +12,14 @@ namespace dc = digitalcurling3;
 class UctNode
 {
     public:
-        typedef std::unique_ptr<UctNode> Ptr;
+        typedef std::shared_ptr<UctNode> Ptr;
 
     public:
         UctNode();
         void    CreateChild(int);
-        void    expandChild(int);
-        void    resetAsRoot();
-        void    removeChild(Ptr);
+        // void    expandChild(int);
+        // void    resetAsRoot();
+        // void    removeChild(Ptr);
 
         Ptr GetChild(int);
 

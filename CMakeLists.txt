@@ -37,6 +37,8 @@ find_package(Threads REQUIRED)
 
 # libtorch
 set(LIBTORCH_DIR /usr/local/libtorch/)
+set(CAFFE2_USE_CUDNN 1)
+set(CAFFE2_USE_CUSPARSELT 1)
 list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 find_package(Torch REQUIRED)
 
