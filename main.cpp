@@ -6,7 +6,6 @@
 #include <boost/asio.hpp>
 #include "digitalcurling3/digitalcurling3.hpp"
 
-#include <c10/cuda/CUDACachingAllocator.h>
 
 #include "skip.hpp"
 
@@ -281,9 +280,6 @@ int main(int argc, char const * argv[])
                 auto const output_message = jout.dump() + '\n';
                 boost::asio::write(socket, boost::asio::buffer(output_message));
                 
-                // GPUのキャッシュをクリア
-                c10::cuda::CUDACachingAllocator::emptyCache();
-
                 std::cout << "[out] move" << std::endl;
                 if (std::holds_alternative<dc::moves::Shot>(move)) {
                     dc::moves::Shot const& shot = std::get<dc::moves::Shot>(move);

@@ -7,7 +7,9 @@ child_nodes_(),
 child_move_indices_(),
 evaluated_(false),
 simulated_(false),
-value_(-1)
+value_(-1),
+visit_count_(0),
+sum_value_(0)
 {}
 
 void UctNode::CreateChild(int index) {
@@ -42,6 +44,11 @@ UctNode* UctNode::GetChild(int index)
     auto it = std::find(child_move_indices_.begin(), child_move_indices_.end(), index);
 
     return child_nodes_[it - child_move_indices_.begin()].get();
+}
+
+UctNode* UctNode::GetParent()
+{
+    return parent_;
 }
 
 void UctNode::SetGameState(dc::GameState game_state)
@@ -105,4 +112,10 @@ std::vector<std::unique_ptr<UctNode>> UctNode::GetChildNodes()
 std::vector<int> UctNode::GetChildIndices()
 {
     return child_move_indices_;
+}
+
+void UctNode::SetCountValue(float value)
+{
+    ++visit_count_;
+    sum_value_ += value;
 }

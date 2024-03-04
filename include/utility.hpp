@@ -111,14 +111,14 @@ namespace utility
             for (auto l=game_states[i].shot+1; l < game_states[i].kShotPerEnd; ++l){
                 for (auto n=0; n < height; ++n){
                     for (auto m=0; m < width; ++m){
-                        sheet_array[i][l+2][n][m] = 1;
+                        sheet_array[i][l+2][n][m] = 0;
                     }
                 }  
             }
             for (auto l=0; l < 2; ++l){
                 for (auto n=0; n < height; ++n){
                     for (auto m=0; m < width; ++m){
-                        sheet_array[i][l][n][m] = 1;
+                        sheet_array[i][l][n][m] = 0;
                     }
                 }  
             }

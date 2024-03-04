@@ -176,6 +176,11 @@ float Skip::search(UctNode* current_node, int k)
     } else {
         auto next_node = current_node->GetChild(indices.index({0, 0}).item<int>());
         if (next_node->GetEvaluated()) result = next_node->GetValue();
+        else {
+            queue_create_child[k] = current_node;
+            queue_create_child_index[k] = indices.index({0, 0}).item<int>();
+            flag_create_child[k] = true;
+        }
 
         // if (result != -1) updateNode(current_node, it - child_indices.begin(), result);
 
@@ -186,8 +191,21 @@ float Skip::search(UctNode* current_node, int k)
 }
 
 
-void Skip::updateNode(std::unique_ptr<UctNode> current_node, int child_id, float result){
+void Skip::updateParent(UctNode* node, float value)
+{
+    if (node->GetParent()) {
+        node->GetParent()->SetCountValue(value);
+        updateParent(node->GetParent(), value);
+    }
+}
 
+void Skip::updateNodes()
+{
+    for (auto& node: queue_evaluate) {
+        float value = node->GetValue();
+        node->SetCountValue(value);
+        updateParent(node, value);
+    }
 }
 
 
@@ -281,7 +299,6 @@ void Skip::EvaluateQueue()
     for (int i=0; i<size; ++i) {
         queue_evaluate[i]->SetEvaluatedResults(policy[i], value[i].item<float>());
     }
-    queue_evaluate.clear();
 }
 
 
@@ -340,14 +357,28 @@ dc::Move Skip::command(dc::GameState const& game_state)
 
         count += queue_evaluate.size();
         EvaluateQueue();
+        updateNodes();
+        queue_evaluate.clear();
+
 
         // updateNode();
         now = std::chrono::system_clock::now();
     }
+    // GPUのキャッシュをクリア
+    c10::cuda::CUDACachingAllocator::emptyCache();
 
     auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
     std::cout << count << " simulations in " << msec << " msec" << std::endl;
-    dc::moves::Shot shot = {utility::PixelToVelocity(8, 8), dc::moves::Shot::Rotation::kCCW};
+
+    std::vector<int> child_indices = root_node->GetChildIndices();
+    std::vector<float> values;
+    for (auto index: child_indices) {
+        values.push_back(root_node->GetChild(index)->GetValue());
+    }
+
+    int pixel_id = child_indices[static_cast<int>(std::distance(values.begin(), std::max_element(values.begin(), values.end())))];
+
+    dc::moves::Shot shot = {utility::PixelToVelocity(pixel_id % (policy_weight * policy_width) / policy_width, pixel_id % (policy_weight * policy_width) % policy_width), dc::moves::Shot::Rotation::kCCW};
     dc::Move move = shot;
     return move;
 }

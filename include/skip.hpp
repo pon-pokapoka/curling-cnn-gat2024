@@ -22,7 +22,8 @@ class Skip
 
         float search(UctNode*, int);
 
-        void updateNode(std::unique_ptr<UctNode>, int, float);
+        void updateNodes();
+        void updateParent(UctNode*, float);
 
         void SimulateMove(UctNode*, int, int);
         torch::Tensor EvaluateGameState(std::vector<dc::GameState>, dc::GameSetting);

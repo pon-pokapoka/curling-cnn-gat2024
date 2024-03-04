@@ -22,6 +22,7 @@ class UctNode
         // void    removeChild(Ptr);
 
         UctNode* GetChild(int);
+        UctNode* GetParent();
 
         void SetGameState(dc::GameState);
         dc::GameState GetGameState();
@@ -40,6 +41,8 @@ class UctNode
 
         std::vector<Ptr> GetChildNodes();
         std::vector<int> GetChildIndices();
+
+        void SetCountValue(float);
 
     private:
         UctNode* parent_;
