@@ -79,30 +79,20 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
         std::cout << ".";
         std::vector<torch::jit::IValue> inputs;
         inputs.push_back(torch::rand({nBatchSize, 18, 64, 16}).to(device));
-        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
-        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
-        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
 
         // Execute the model and turn its output into a tensor.
         auto outputs = module.forward(inputs).toTensor();
         torch::Tensor out1 = outputs.to(torch::kCPU);
-        // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
-        // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
     }
     std::cout << "\n";
     for (auto i = 0; i < 10; ++i) {
         std::cout << ".";
         std::vector<torch::jit::IValue> inputs;
         inputs.push_back(torch::rand({1, 18, 64, 16}).to(device));
-        // inputs.push_back(torch::rand({1, 1}).to(device));
-        // inputs.push_back(torch::rand({1, 1}).to(device));
-        // inputs.push_back(torch::rand({1, 1}).to(device));
 
         // Execute the model and turn its output into a tensor.
         auto outputs = module.forward(inputs).toTensor();
         torch::Tensor out1 = outputs.to(torch::kCPU);
-        // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
-        // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
     }
     c10::cuda::CUDACachingAllocator::emptyCache();
     std::cout << "\n";
@@ -130,6 +120,9 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
     // ショット数で等分するが、超過分を考慮して0.8倍しておく
     limit = g_game_setting.thinking_time[0] * 0.8 / 8. / g_game_setting.max_end;
 
+    dc::GameState temp_game_state(g_game_setting);
+    kShotPerEnd = static_cast<int>(temp_game_state.kShotPerEnd);
+
     // ショットシミュレーションの動作確認
     // しなくて良い
     std::cout << "initial simulation\n";
@@ -154,6 +147,7 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
         }
     }
     std::cout << "\n";
+
 
 }
 
@@ -241,11 +235,12 @@ torch::Tensor Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc
     std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
 
-    torch::Tensor win_rate = torch::zeros({game_states.size(), game_states[0].kShotPerEnd+1}).to(torch::kCPU);
+    int size = static_cast<int>(game_states.size());
+    torch::Tensor win_rate = torch::zeros({size, kShotPerEnd+1}).to(torch::kCPU);
 
-    for (auto n=0; n < game_states.size(); ++n){    
-        for (auto i=0; i < game_states[n].kShotPerEnd+1; ++i){
-            int scorediff_after_end = model_input.score[n] + i - game_states[n].kShotPerEnd/2;
+    for (auto n=0; n < size; ++n){    
+        for (auto i=0; i < kShotPerEnd+1; ++i){
+            int scorediff_after_end = model_input.score[n] + i - kShotPerEnd/2;
             if (scorediff_after_end > 9) scorediff_after_end = 9;
             else if (scorediff_after_end < -9) scorediff_after_end = -9;
 
@@ -267,12 +262,12 @@ torch::Tensor Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc
 
 void Skip::EvaluateQueue()
 {       
-  
+    int size = static_cast<int>(queue_evaluate.size());
     std::vector<dc::GameState> game_states;
-    game_states.resize(queue_evaluate.size());
+    game_states.resize(size);
 
     #pragma omp parallel for
-    for (int i=0; i<queue_evaluate.size(); ++i) {
+    for (auto i=0; i<size; ++i) {
         game_states[i] = queue_evaluate[i]->GetGameState();
     }
 
@@ -280,10 +275,10 @@ void Skip::EvaluateQueue()
     torch::Tensor value = EvaluateGameState(game_states, g_game_setting).to(torch::kCPU);
 
 
-    torch::Tensor policy = torch::rand({queue_evaluate.size(), policy_weight * policy_width * policy_rotation}).to(torch::kCPU);
-    // torch::Tensor value = torch::rand({queue_evaluate.size()});
+    torch::Tensor policy = torch::rand({size, policy_weight * policy_width * policy_rotation}).to(torch::kCPU);
+    // torch::Tensor value = torch::rand({size});
 
-    for (int i=0; i<queue_evaluate.size(); ++i) {
+    for (int i=0; i<size; ++i) {
         queue_evaluate[i]->SetEvaluatedResults(policy[i], value[i].item<float>());
     }
     queue_evaluate.clear();

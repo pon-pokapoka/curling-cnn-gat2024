@@ -49,6 +49,8 @@ class Skip
 
         std::array<dc::GameState, nLoop> temp_game_states;
 
+        int kShotPerEnd;
+
 // torch::jit::script::Module module; // モデル
 
 // // シミュレーション用変数
