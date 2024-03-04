@@ -143,12 +143,12 @@ namespace utility
                 }
             }
         }
-        torch::Tensor sheet = torch::from_blob(sheet_array.data(), {size, nChannel, height, width}, device);
+        torch::Tensor sheet = torch::from_blob(sheet_array.data(), {size, nChannel, height, width});
 
         // now = std::chrono::system_clock::now();
         // std::cout << "Input: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
-        inputs.push_back(sheet);
+        inputs.push_back(sheet.to(device));
         // inputs.push_back(end);
         // inputs.push_back(score);
         // inputs.push_back(shot);

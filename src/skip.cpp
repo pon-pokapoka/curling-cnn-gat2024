@@ -1,10 +1,14 @@
 #include "skip.hpp"
 
+#include <iostream>
+
 #include <torch/script.h>
 #include <torch/cuda.h>
 #include <torch/csrc/api/include/torch/nn/functional/activation.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 
 #include "utility.hpp"
+#include "readcsv.hpp"
 
 namespace F = torch::nn::functional;
 
@@ -16,15 +20,13 @@ int policy_weight = 16;
 int policy_width = 32;
 int policy_rotation = 2;
 
-Skip::Skip(torch::jit::script::Module module, dc::GameSetting g_game_setting, std::array<std::shared_ptr<dc::ISimulator>, nLoop> g_simulators, std::array<std::shared_ptr<dc::IPlayer>, 4> g_players, std::chrono::duration<double> limit,
-std::vector<std::vector<double>> win_table,
-torch::Device device) : module(module),
-g_game_setting(g_game_setting),
-g_simulators(g_simulators),
-g_players(g_players),
-limit(limit),
-win_table(win_table),
-device(device),
+Skip::Skip() : module(),
+g_game_setting(),
+g_simulators(),
+g_players(),
+limit(),
+win_table(),
+device(torch::kCPU),
 queue_evaluate(),
 queue_simulate(),
 queue_create_child(),
@@ -38,7 +40,124 @@ temp_game_states()
     }
 }
 
-float Skip::search(std::shared_ptr<UctNode> current_node, int k)
+void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, std::unique_ptr<dc::ISimulatorFactory> simulator_factory,     std::array<std::unique_ptr<dc::IPlayerFactory>, 4> player_factories,  std::array<size_t, 4> & player_order)
+{
+    win_table = readcsv("model/win_table.csv");
+
+    for (const auto& row : win_table) {
+        for (const auto& value : row) {
+            std::cout << value << '\t';
+        }
+        std::cout << std::endl;
+    }
+
+    torch::NoGradGuard no_grad; 
+
+    device = torch::kCPU;
+    if (torch::cuda::is_available()) {
+        std::cout << "CUDA is available!" << std::endl;
+        device = torch::kCUDA;
+    }   
+    else {
+        std::cout << "CUDA is not available." << std::endl;
+    }
+    // Deserialize the ScriptModule from a file using torch::jit::load().
+    try {
+        // Deserialize the ScriptModule from a file using torch::jit::load().
+        std::cout << "model loading..." << std::endl;
+        module = torch::jit::load("model/traced_curling_shotpyshot_v2_score-008.pt", device);
+        std::cout << "model loaded" << std::endl;
+    }
+    catch (const c10::Error& e) {
+        std::cerr << "error loading the model\n";
+    }
+
+    // ここでCNNによる推論を行うことで、次回以降の速度が早くなる
+    // 使うバッチサイズすべてで行っておく
+    std::cout << "initial inference\n";
+    for (auto i = 0; i < 10; ++i) {
+        std::cout << ".";
+        std::vector<torch::jit::IValue> inputs;
+        inputs.push_back(torch::rand({nBatchSize, 18, 64, 16}).to(device));
+        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
+        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
+        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
+
+        // Execute the model and turn its output into a tensor.
+        auto outputs = module.forward(inputs).toTensor();
+        torch::Tensor out1 = outputs.to(torch::kCPU);
+        // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
+        // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
+    }
+    std::cout << "\n";
+    for (auto i = 0; i < 10; ++i) {
+        std::cout << ".";
+        std::vector<torch::jit::IValue> inputs;
+        inputs.push_back(torch::rand({1, 18, 64, 16}).to(device));
+        // inputs.push_back(torch::rand({1, 1}).to(device));
+        // inputs.push_back(torch::rand({1, 1}).to(device));
+        // inputs.push_back(torch::rand({1, 1}).to(device));
+
+        // Execute the model and turn its output into a tensor.
+        auto outputs = module.forward(inputs).toTensor();
+        torch::Tensor out1 = outputs.to(torch::kCPU);
+        // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
+        // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
+    }
+    c10::cuda::CUDACachingAllocator::emptyCache();
+    std::cout << "\n";
+
+    // シミュレータFCV1Lightを使用する．
+    g_game_setting = game_setting;
+    for (unsigned i = 0; i < nLoop; ++i) {
+        g_simulators[i] = dc::simulators::SimulatorFCV1LightFactory().CreateSimulator();
+    }
+    g_simulator_storage = g_simulators[0]->CreateStorage();
+
+    // プレイヤーを生成する
+    // 非対応の場合は NormalDistプレイヤーを使用する．
+    assert(g_players.size() == player_factories.size());
+    for (size_t i = 0; i < g_players.size(); ++i) {
+        auto const& player_factory = player_factories[player_order[i]];
+        if (player_factory) {
+            g_players[i] = player_factory->CreatePlayer();
+        } else {
+            g_players[i] = dc::players::PlayerNormalDistFactory().CreatePlayer();
+        }
+    }
+
+    // 考慮時間制限
+    // ショット数で等分するが、超過分を考慮して0.8倍しておく
+    limit = g_game_setting.thinking_time[0] * 0.8 / 8. / g_game_setting.max_end;
+
+    // ショットシミュレーションの動作確認
+    // しなくて良い
+    std::cout << "initial simulation\n";
+    for (auto j = 0; j < 10; ++j) {
+        std::cout << ".";
+        dc::GameState dummy_game_state(g_game_setting);
+        std::array<dc::GameState, nBatchSize> dummy_game_states; 
+        std::array<dc::Move, nBatchSize> dummy_moves;
+        auto & dummy_player = *g_players[0];
+        dc::moves::Shot dummy_shot = {dc::Vector2(0, 2.5), dc::moves::Shot::Rotation::kCW};
+        #pragma omp parallel for
+        for (auto i=0; i < nBatchSize; ++i) {
+            dummy_game_states[i] = dummy_game_state;
+        }
+        #pragma omp parallel for
+        for (auto i=0; i < nBatchSize; ++i) {
+            dummy_moves[i] = dummy_shot;
+            g_simulators[i]->Load(*g_simulator_storage);
+
+            dc::ApplyMove(g_game_setting, *g_simulators[i],
+                dummy_player, dummy_game_states[i], dummy_moves[i], std::chrono::milliseconds(0));
+        }
+    }
+    std::cout << "\n";
+
+}
+
+float Skip::search(UctNode* current_node, int k)
 {
     float result = current_node->GetValue();
     // output = evaluate(current_node);
@@ -73,13 +192,13 @@ float Skip::search(std::shared_ptr<UctNode> current_node, int k)
 }
 
 
-void Skip::updateNode(std::shared_ptr<UctNode> current_node, int child_id, float result){
+void Skip::updateNode(std::unique_ptr<UctNode> current_node, int child_id, float result){
 
 }
 
 
 
-void Skip::SimulateMove(std::shared_ptr<UctNode> current_node, int index, int k)
+void Skip::SimulateMove(UctNode* current_node, int index, int k)
 {
     dc::Move temp_move;
     dc::moves::Shot shot;
@@ -104,18 +223,20 @@ void Skip::SimulateMove(std::shared_ptr<UctNode> current_node, int index, int k)
 
 
 torch::Tensor Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
-{   
+{
+    torch::NoGradGuard no_grad; 
+   
     auto start = std::chrono::system_clock::now();
     auto now = std::chrono::system_clock::now();
 
-    utility::ModelInput model_input = utility::GameStateToInput(game_states, game_setting, torch::kCPU);
+    utility::ModelInput model_input = utility::GameStateToInput(game_states, game_setting, device);
     now = std::chrono::system_clock::now();
     std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
 
 
 
-    auto outputs = module.forward(model_input.to(device).inputs).toTensor().to(torch::kCPU);
+    auto outputs = module.forward(model_input.inputs).toTensor().to(torch::kCPU);
     now = std::chrono::system_clock::now();
     std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
@@ -186,7 +307,7 @@ dc::Move Skip::command(dc::GameState const& game_state)
     // torch::Tensor filt = createFilter(current_game_state, g_game_setting);
 
     // root node
-    std::shared_ptr<UctNode> root_node(new UctNode());
+    std::unique_ptr<UctNode> root_node(new UctNode());
     root_node->SetGameState(current_game_state);
     root_node->SetEvaluatedResults(torch::rand({1, policy_weight * policy_width * policy_rotation}), current_outputs.index({0}).item<float>());
 
@@ -197,7 +318,7 @@ dc::Move Skip::command(dc::GameState const& game_state)
         #pragma omp parallel for
         for (auto i = 0; i < nLoop; ++i) {
             // std::cout << i << "  ";
-            search(root_node, i);
+            search(root_node.get(), i);
             if (std::accumulate(std::begin(flag_create_child), std::end(flag_create_child), 0) >= nBatchSize) continue;
         }
         now = std::chrono::system_clock::now();
@@ -213,9 +334,9 @@ dc::Move Skip::command(dc::GameState const& game_state)
             }
         }
 
-        for (auto& ptr : queue_create_child) {
-            ptr.reset();
-        }
+        // for (auto ptr : queue_create_child) {
+        //     ptr.reset();
+        // }
         #pragma omp parallel for
         for (auto i=0; i < nLoop; ++i) {
             flag_create_child[i] = false;

@@ -16,15 +16,15 @@ const int nCandidate = 10000; // シミュレーションするショットの�
 class Skip
 {
     public:
-        Skip(torch::jit::script::Module, dc::GameSetting,
-            std::array<std::shared_ptr<dc::ISimulator>, nLoop>, std::array<std::shared_ptr<dc::IPlayer>, 4>, std::chrono::duration<double>, 
-            std::vector<std::vector<double>>, torch::Device);
+        Skip();
 
-        float search(std::shared_ptr<UctNode>, int);
+        void OnInit(dc::Team const, dc::GameSetting const&,     std::unique_ptr<dc::ISimulatorFactory>,     std::array<std::unique_ptr<dc::IPlayerFactory>, 4>, std::array<size_t, 4> & );
 
-        void updateNode(std::shared_ptr<UctNode>, int, float);
+        float search(UctNode*, int);
 
-        void SimulateMove(std::shared_ptr<UctNode>, int, int);
+        void updateNode(std::unique_ptr<UctNode>, int, float);
+
+        void SimulateMove(UctNode*, int, int);
         torch::Tensor EvaluateGameState(std::vector<dc::GameState>, dc::GameSetting);
         void EvaluateQueue();
 
@@ -33,20 +33,32 @@ class Skip
     private:
         torch::jit::script::Module module;
         dc::GameSetting g_game_setting;
-        std::array<std::shared_ptr<dc::ISimulator>, nLoop> g_simulators;
-        std::array<std::shared_ptr<dc::IPlayer>, 4> g_players;
+        std::array<std::unique_ptr<dc::ISimulator>, nLoop> g_simulators;
+        std::unique_ptr<dc::ISimulatorStorage> g_simulator_storage;
+        std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
         std::chrono::duration<double> limit;
         std::vector<std::vector<double>> win_table;
         torch::Device device;
 
-        std::vector<std::shared_ptr<UctNode>> queue_evaluate;
+        std::vector<UctNode*> queue_evaluate;
         std::vector<int> queue_simulate;
 
-        std::array<std::shared_ptr<UctNode>, nLoop> queue_create_child;
+        std::array<UctNode*, nLoop> queue_create_child;
         std::array<int, nLoop> queue_create_child_index;
         std::array<bool, nLoop> flag_create_child;
 
         std::array<dc::GameState, nLoop> temp_game_states;
+
+// torch::jit::script::Module module; // モデル
+
+// // シミュレーション用変数
+// dc::GameSetting g_game_setting;
+// std::unique_ptr<dc::ISimulator> g_simulator;
+// std::array<std::unique_ptr<dc::ISimulator>, nLoop> g_simulators;
+// std::array<std::unique_ptr<dc::IPlayer>, 4> g_players;
+
+// std::chrono::duration<double> limit; // 考慮時間制限
+
 
 
 

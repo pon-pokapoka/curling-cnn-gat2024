@@ -6,41 +6,20 @@
 #include <boost/asio.hpp>
 #include "digitalcurling3/digitalcurling3.hpp"
 
-#include <torch/script.h>
-#include <torch/cuda.h>
-#include <torch/csrc/api/include/torch/nn/functional/activation.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 
 #include "skip.hpp"
-#include "readcsv.hpp"
 
 
 namespace dc = digitalcurling3;
-namespace F = torch::nn::functional;
 
 
 namespace {
 
 
 dc::Team g_team;  // 自身のチームID
+Skip skip = Skip();
 
-torch::jit::script::Module module; // モデル
-
-// シミュレーション用変数
-dc::GameSetting g_game_setting;
-std::unique_ptr<dc::ISimulator> g_simulator;
-std::array<std::shared_ptr<dc::ISimulator>, nLoop> g_simulators;
-std::unique_ptr<dc::ISimulatorStorage> g_simulator_storage;
-std::array<std::shared_ptr<dc::IPlayer>, 4> g_players;
-
-std::chrono::duration<double> limit; // 考慮時間制限
-
-torch::Device device(torch::kCPU);
-
-std::vector<std::vector<double>> win_table;
-
-// policyのショットのうち効果のないショットを除くフィルターを作成
-// ガードゾーン、ハウスに止まるショットと、シート上にあるストーンに干渉するショットのみを残す
 /// \brief サーバーから送られてきた試合設定が引数として渡されるので，試合前の準備を行います．
 ///
 /// 引数 \p player_order を編集することでプレイヤーのショット順を変更することができます．各プレイヤーの情報は \p player_factories に格納されています．
@@ -73,120 +52,8 @@ void OnInit(
     // TODO AIを作る際はここを編集してください
     g_team = team;
 
-    win_table = readcsv("model/win_table.csv");
+    skip.OnInit(g_team, game_setting, std::move(simulator_factory), std::move(player_factories),  player_order);
 
-    for (const auto& row : win_table) {
-        for (const auto& value : row) {
-            std::cout << value << '\t';
-        }
-        std::cout << std::endl;
-    }
-
-    torch::NoGradGuard no_grad; 
-
-    device = torch::kCPU;
-    if (torch::cuda::is_available()) {
-        std::cout << "CUDA is available!" << std::endl;
-        device = torch::kCUDA;
-    }   
-    else {
-        std::cout << "CUDA is not available." << std::endl;
-    }
-    // Deserialize the ScriptModule from a file using torch::jit::load().
-    try {
-        // Deserialize the ScriptModule from a file using torch::jit::load().
-        std::cout << "model loading..." << std::endl;
-        module = torch::jit::load("model/traced_curling_shotpyshot_v2_score-008.pt", device);
-        std::cout << "model loaded" << std::endl;
-    }
-    catch (const c10::Error& e) {
-        std::cerr << "error loading the model\n";
-    }
-
-    // ここでCNNによる推論を行うことで、次回以降の速度が早くなる
-    // 使うバッチサイズすべてで行っておく
-    std::cout << "initial inference\n";
-    for (auto i = 0; i < 10; ++i) {
-        std::cout << ".";
-        std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(torch::rand({nBatchSize, 18, 64, 16}).to(device));
-        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
-        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
-        // inputs.push_back(torch::rand({nBatchSize, 1}).to(device));
-
-        // Execute the model and turn its output into a tensor.
-        auto outputs = module.forward(inputs).toTensor();
-        torch::Tensor out1 = outputs.to(torch::kCPU);
-        // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
-        // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
-    }
-    std::cout << "\n";
-    for (auto i = 0; i < 10; ++i) {
-        std::cout << ".";
-        std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(torch::rand({1, 18, 64, 16}).to(device));
-        // inputs.push_back(torch::rand({1, 1}).to(device));
-        // inputs.push_back(torch::rand({1, 1}).to(device));
-        // inputs.push_back(torch::rand({1, 1}).to(device));
-
-        // Execute the model and turn its output into a tensor.
-        auto outputs = module.forward(inputs).toTensor();
-        torch::Tensor out1 = outputs.to(torch::kCPU);
-        // torch::Tensor out2 = outputs->elements()[1].toTensor().to(torch::kCPU); 
-        // torch::Tensor out3 = outputs->elements()[2].toTensor().to(torch::kCPU);
-    }
-    c10::cuda::CUDACachingAllocator::emptyCache();
-    std::cout << "\n";
-
-    // シミュレータFCV1Lightを使用する．
-    g_team = team;
-    g_game_setting = game_setting;
-    g_simulator = dc::simulators::SimulatorFCV1LightFactory().CreateSimulator();
-    for (unsigned i = 0; i < nLoop; ++i) {
-        g_simulators[i] = dc::simulators::SimulatorFCV1LightFactory().CreateSimulator();
-    }
-    g_simulator_storage = g_simulator->CreateStorage();
-
-    // プレイヤーを生成する
-    // 非対応の場合は NormalDistプレイヤーを使用する．
-    assert(g_players.size() == player_factories.size());
-    for (size_t i = 0; i < g_players.size(); ++i) {
-        auto const& player_factory = player_factories[player_order[i]];
-        if (player_factory) {
-            g_players[i] = player_factory->CreatePlayer();
-        } else {
-            g_players[i] = dc::players::PlayerNormalDistFactory().CreatePlayer();
-        }
-    }
-
-    // 考慮時間制限
-    // ショット数で等分するが、超過分を考慮して0.8倍しておく
-    limit = g_game_setting.thinking_time[0] * 0.8 / 8. / g_game_setting.max_end;
-
-    // ショットシミュレーションの動作確認
-    // しなくて良い
-    std::cout << "initial simulation\n";
-    for (auto j = 0; j < 10; ++j) {
-        std::cout << ".";
-        dc::GameState dummy_game_state(g_game_setting);
-        std::array<dc::GameState, nBatchSize> dummy_game_states; 
-        std::array<dc::Move, nBatchSize> dummy_moves;
-        auto & dummy_player = *g_players[0];
-        dc::moves::Shot dummy_shot = {dc::Vector2(0, 2.5), dc::moves::Shot::Rotation::kCW};
-        #pragma omp parallel for
-        for (auto i=0; i < nBatchSize; ++i) {
-            dummy_game_states[i] = dummy_game_state;
-        }
-        #pragma omp parallel for
-        for (auto i=0; i < nBatchSize; ++i) {
-            dummy_moves[i] = dummy_shot;
-            g_simulators[i]->Load(*g_simulator_storage);
-
-            dc::ApplyMove(g_game_setting, *g_simulators[i],
-                dummy_player, dummy_game_states[i], dummy_moves[i], std::chrono::milliseconds(0));
-        }
-    }
-    std::cout << "\n";
 }
 
 
@@ -200,8 +67,6 @@ void OnInit(
 dc::Move OnMyTurn(dc::GameState const& game_state)
 {
     // TODO AIを作る際はここを編集してください
-    Skip skip(module, g_game_setting, g_simulators, g_players, limit, win_table, device);
-
     return skip.command(game_state);
 }
 
