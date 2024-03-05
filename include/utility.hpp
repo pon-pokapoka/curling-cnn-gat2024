@@ -10,6 +10,7 @@ namespace utility
 {
 
     double const dpi = 1/16;
+    double const ipd = 16;
     double const m_to_inch = 1/0.0254;
 
     double const one_over_to_tee = 1 / 38.405;
@@ -42,7 +43,7 @@ namespace utility
             2.35, 2.37, 2.385, 2.4, 2.415, 2.43, 2.45,
             2.485, 2.535, 2.6, 3., 3.4, 3.8,}};
 
-        return dc::Vector2(velocity_array[i] * std::sin(std::atan(-(j - policy_width/2) * 0.0254 * one_over_to_tee)), velocity_array[i] * std::cos(std::atan(-(j - policy_width/2) * 0.0254 * one_over_to_tee)));
+        return dc::Vector2(velocity_array[i] * std::sin(std::atan(-(j - policy_width/2) * 0.0254 * 5 * one_over_to_tee)), velocity_array[i] * std::cos(std::atan(-(j - policy_width/2) * 0.0254 * 5 * one_over_to_tee)));
     }
 
 
@@ -163,56 +164,58 @@ namespace utility
     }
 
 
-torch::Tensor createFilter(dc::GameState game_state, dc::GameSetting game_setting)
+std::array<std::array<std::array<bool, policy_width>, policy_weight>, policy_rotation> createFilter(dc::GameState game_state, dc::GameSetting game_setting)
 {
-    torch::Tensor filt = torch::zeros({policy_rotation, policy_weight, policy_width}).to("cpu");
+    // torch::Tensor filt = torch::zeros({policy_rotation, policy_weight, policy_width}).to("cpu");
+    std::array<std::array<std::array<bool, policy_width>, policy_weight>, policy_rotation> filt;
+    filt.fill({});
 
-    int min_velocity = 1;
-    if (game_state.shot+1 == game_state.kShotPerEnd) min_velocity = 13; // ラストショットはハウスに届かないショットを投げても意味がない
+    int min_velocity = 0;
+    if (game_state.shot+1 == game_state.kShotPerEnd) min_velocity = 3; // ラストショットはハウスに届かないショットを投げても意味がない
 
-    for (auto i=0; i < 50; ++i){
-        for (auto j=0; j < 187; ++j){
-            if ((min_velocity <= i) && (i < 37) && (j < 94)) filt.index({1, i, j}) = 1;
-            if ((min_velocity <= i) && (i < 37) && (j >= 93)) filt.index({0, i, j}) = 1;
+    for (auto i=0; i < policy_weight; ++i){
+        for (auto j=0; j < policy_width; ++j){
+            if ((min_velocity <= i) && (i < policy_weight) && (j < 20)) filt[1][i][j] = 1;
+            if ((min_velocity <= i) && (i < policy_weight) && (j >= 12)) filt[0][i][j] = 1;
 
-            if ((i < 37) && (j < 139)) filt.index({0, i, j}) = 0; // block side guard
-            if ((i < 37) && (j >= 48)) filt.index({1, i, j}) = 0;
+            // if ((i < 37) && (j < 139)) filt.index({0, i, j}) = 0; // block siipdde guard
+            // if ((i < 37) && (j >= 48)) filt.index({1, i, j}) = 0;
         }
     }
 
 
-    for (size_t team_stone_idx = 0; team_stone_idx < game_state.kShotPerEnd / 2; ++team_stone_idx) {
-        auto const& stone_hammer = game_state.stones[static_cast<size_t>(game_state.hammer)][team_stone_idx];
-        auto const& stone_nohammer = game_state.stones[static_cast<size_t>(dc::GetOpponentTeam(game_state.hammer))][team_stone_idx];
-        if (stone_hammer) {
-            std::pair <int, int> pixel = PositionToPixel(stone_hammer->position);
-            // std::cout << pixel << std::endl;
-            for (auto i=0; i < 50; ++i){
-                for (auto j=0; j < 187; ++j){
-                    if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
-                        filt.index({1, i, j}) = 1;
-                    }
-                    if ((-4*(i - 50) <= j - (187 - (pixel.second - (pixel.first - 252)/20))) && (-4*(i - 50) >= j - (187 - (pixel.second - (pixel.first - 252)/20 - 40)))) {
-                        filt.index({0, i, j}) = 1;
-                    }
-                }
-            }
-        }
-        if (stone_nohammer) {
-            std::pair <int, int> pixel = PositionToPixel(stone_nohammer->position);
-            // std::cout << pixel << std::endl;
-            for (auto i=0; i < 50; ++i){
-                for (auto j=0; j < 187; ++j){
-                    if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
-                        filt.index({1, i, j}) = 1;
-                    }
-                    if ((-4*(i - 50) <= j - (187 - (pixel.second - (pixel.first - 252)/20))) && (-4*(i - 50) >= j - (187 - (pixel.second - (pixel.first - 252)/20 - 40)))) {
-                        filt.index({0, i, j}) = 1;
-                    }
-                }
-            }
-        }
-    }
+    // for (size_t team_stone_idx = 0; team_stone_idx < game_state.kShotPerEnd / 2; ++team_stone_idx) {
+    //     auto const& stone_hammer = game_state.stones[static_cast<size_t>(game_state.hammer)][team_stone_idx];
+    //     auto const& stone_nohammer = game_state.stones[static_cast<size_t>(dc::GetOpponentTeam(game_state.hammer))][team_stone_idx];
+    //     if (stone_hammer) {
+    //         std::pair <int, int> pixel = PositionToPixel(stone_hammer->position);
+    //         // std::cout << pixel << std::endl;
+    //         for (auto i=0; i < 50; ++i){
+    //             for (auto j=0; j < 187; ++j){
+    //                 if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
+    //                     filt.index({1, i, j}) = 1;
+    //                 }
+    //                 if ((-4*(i - 50) <= j - (187 - (pixel.second - (pixel.first - 252)/20))) && (-4*(i - 50) >= j - (187 - (pixel.second - (pixel.first - 252)/20 - 40)))) {
+    //                     filt.index({0, i, j}) = 1;
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     if (stone_nohammer) {
+    //         std::pair <int, int> pixel = PositionToPixel(stone_nohammer->position);
+    //         // std::cout << pixel << std::endl;
+    //         for (auto i=0; i < 50; ++i){
+    //             for (auto j=0; j < 187; ++j){
+    //                 if ((4*(i - 50) >= j - pixel.second + (pixel.first - 252)/20) && (4*(i - 50) <= j - pixel.second + (pixel.first - 252)/20 + 40)) {
+    //                     filt.index({1, i, j}) = 1;
+    //                 }
+    //                 if ((-4*(i - 50) <= j - (187 - (pixel.second - (pixel.first - 252)/20))) && (-4*(i - 50) >= j - (187 - (pixel.second - (pixel.first - 252)/20 - 40)))) {
+    //                     filt.index({0, i, j}) = 1;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     return filt;
 }

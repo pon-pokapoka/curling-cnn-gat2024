@@ -67,14 +67,19 @@ void UctNode::SetPolicy(torch::Tensor policy)
     policy_ = policy;
 }
 
-void UctNode::SetFilter(torch::Tensor filter)
+void UctNode::SetFilter(std::array<std::array<std::array<bool, policy_width>, policy_weight>, policy_rotation> filter)
 {
-    filter_ = filter;
+    filter_ = torch::from_blob(filter.data(), {policy_rotation, policy_weight, policy_width}, torch::kInt8);
 }
 
 void UctNode::SetValue(float value)
 {
     value_ = value;
+}
+
+torch::Tensor UctNode::GetFilter()
+{
+    return filter_;
 }
 
 void UctNode::SetEvaluatedResults(torch::Tensor policy, float value)
@@ -118,4 +123,9 @@ void UctNode::SetCountValue(float value)
 {
     ++visit_count_;
     sum_value_ += value;
+}
+
+float UctNode::GetCountValue()
+{
+    return sum_value_ / visit_count_;
 }

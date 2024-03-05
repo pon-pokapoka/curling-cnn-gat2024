@@ -9,6 +9,11 @@
 
 namespace dc = digitalcurling3;
 
+int const policy_weight = 16;
+int const policy_width = 32;
+int const policy_rotation = 2;
+
+
 class UctNode
 {
     public:
@@ -27,8 +32,10 @@ class UctNode
         void SetGameState(dc::GameState);
         dc::GameState GetGameState();
         void SetPolicy(torch::Tensor);
-        void SetFilter(torch::Tensor);
+        void SetFilter(std::array<std::array<std::array<bool, policy_width>, policy_weight>, policy_rotation>);
         void SetValue(float);
+
+        torch::Tensor GetFilter();
 
         void SetEvaluatedResults(torch::Tensor, float);
 
@@ -43,6 +50,7 @@ class UctNode
         std::vector<int> GetChildIndices();
 
         void SetCountValue(float);
+        float GetCountValue();
 
     private:
         UctNode* parent_;

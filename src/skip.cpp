@@ -12,13 +12,9 @@
 
 namespace F = torch::nn::functional;
 
-int height = 64;
-int width = 16;
-int nChannel = 18;
-
-int policy_weight = 16;
-int policy_width = 32;
-int policy_rotation = 2;
+// int const policy_weight = 16;
+// int const policy_width = 32;
+// int const policy_rotation = 2;
 
 Skip::Skip() : module(),
 g_game_setting(),
@@ -42,11 +38,13 @@ temp_game_states()
 
 void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, std::unique_ptr<dc::ISimulatorFactory> simulator_factory,     std::array<std::unique_ptr<dc::IPlayerFactory>, 4> player_factories,  std::array<size_t, 4> & player_order)
 {
+    team = g_team;
+
     win_table = readcsv("model/win_table.csv");
 
     for (const auto& row : win_table) {
         for (const auto& value : row) {
-            std::cout << value << '\t';
+            std::cout << value << ' ';
         }
         std::cout << std::endl;
     }
@@ -101,7 +99,7 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
     // シミュレータFCV1Lightを使用する．
     g_game_setting = game_setting;
     for (unsigned i = 0; i < nLoop; ++i) {
-        g_simulators[i] = dc::simulators::SimulatorFCV1LightFactory().CreateSimulator();
+        g_simulators[i] = dc::simulators::SimulatorFCV1Factory().CreateSimulator();
     }
     g_simulator_storage = g_simulators[0]->CreateStorage();
 
@@ -162,7 +160,7 @@ float Skip::search(UctNode* current_node, int k)
     // current_node.getPolicy();
     // filt = current_node.getFilter();
 
-    auto indices = std::get<1>(torch::topk(torch::rand({1, policy_weight*policy_width*policy_rotation}), 1));
+    auto indices = std::get<1>(torch::topk(torch::rand({1, policy_weight*policy_width*policy_rotation}) * current_node->GetFilter().reshape({1, policy_weight*policy_width*policy_rotation}), 1));
 
     auto child_indices = current_node->GetChildIndices();
 
@@ -189,6 +187,23 @@ float Skip::search(UctNode* current_node, int k)
     }
 
     return result;
+}
+
+
+void Skip::searchById(UctNode* current_node, int k, int index)
+{
+    auto child_indices = current_node->GetChildIndices();
+
+    auto it = std::find(child_indices.begin(), child_indices.end(), index);
+
+    if (it == child_indices.end()) {
+        queue_create_child[k] = current_node;
+        queue_create_child_index[k] = index;
+        flag_create_child[k] = true;
+        SimulateMove(current_node, queue_create_child_index[k], k);
+
+    }
+
 }
 
 
@@ -235,7 +250,7 @@ void Skip::SimulateMove(UctNode* current_node, int index, int k)
 }
 
 
-torch::Tensor Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
+std::vector<float> Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc::GameSetting game_setting)
 {
     torch::NoGradGuard no_grad; 
    
@@ -255,22 +270,42 @@ torch::Tensor Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc
 
 
     int size = static_cast<int>(game_states.size());
-    torch::Tensor win_rate = torch::zeros({size, kShotPerEnd+1}).to(torch::kCPU);
+    std::vector<std::vector<float>> win_rate_array(size, std::vector<float>(kShotPerEnd+1));
 
-    for (auto n=0; n < size; ++n){    
-        for (auto i=0; i < kShotPerEnd+1; ++i){
-            int scorediff_after_end = model_input.score[n] + i - kShotPerEnd/2;
-            if (scorediff_after_end > 9) scorediff_after_end = 9;
-            else if (scorediff_after_end < -9) scorediff_after_end = -9;
+    torch::Tensor score_prob = F::softmax(outputs, 1);
+    std::vector<float> win_prob(size);
 
-            win_rate.index({n, i}) = win_table[scorediff_after_end+9][model_input.end[n]];
+    for (auto n=0; n < size; ++n){
+        if (game_states[n].shot == 0) {
+            if (game_states[n].IsGameOver()) {
+                win_prob[n] = team == game_states[n].game_result->winner;
+            } else {
+                int scorediff_after_end = model_input.score[n];
+                if (scorediff_after_end > 9) scorediff_after_end = 9;
+                else if (scorediff_after_end < -9) scorediff_after_end = -9;
+                win_prob[n] = win_table[scorediff_after_end+9][model_input.end[n]];
+            }
+        } else {
+            for (auto i=0; i < kShotPerEnd+1; ++i){
+                int scorediff_after_end = model_input.score[n] + i - kShotPerEnd/2;
+                if (scorediff_after_end > 9) scorediff_after_end = 9;
+                else if (scorediff_after_end < -9) scorediff_after_end = -9;
+
+                win_rate_array[n][i] = win_table[scorediff_after_end+9][model_input.end[n]];
+
+            }
+
+            for (auto i=0; i < kShotPerEnd+1; ++i) {
+                win_prob[n] += score_prob.index({n, i}).item<float>() * win_rate_array[n][i];
+            }
         }
     }
     // now = std::chrono::system_clock::now();
     // std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
+    // torch::Tensor win_rate = torch::from_blob(win_rate_array.data(), {size, kShotPerEnd+1});
 
-    torch::Tensor win_prob = at::sum(F::softmax(outputs, 1) * win_rate, 1).to(torch::kCPU);
+    // torch::Tensor win_prob = at::sum(F::softmax(outputs, 1) * win_rate, 1).to(torch::kCPU);
     // now = std::chrono::system_clock::now();
     // std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
@@ -291,14 +326,15 @@ void Skip::EvaluateQueue()
     }
 
 
-    torch::Tensor value = EvaluateGameState(game_states, g_game_setting).to(torch::kCPU);
+    std::vector<float> value = EvaluateGameState(game_states, g_game_setting);
 
 
     torch::Tensor policy = torch::rand({size, policy_weight * policy_width * policy_rotation}).to(torch::kCPU);
     // torch::Tensor value = torch::rand({size});
 
     for (int i=0; i<size; ++i) {
-        queue_evaluate[i]->SetEvaluatedResults(policy[i], value[i].item<float>());
+        queue_evaluate[i]->SetEvaluatedResults(policy[i], value[i]);
+        queue_evaluate[i]->SetFilter(utility::createFilter(game_states[i], g_game_setting));
     }
 }
 
@@ -317,12 +353,13 @@ dc::Move Skip::command(dc::GameState const& game_state)
 
     // auto policy = F::softmax(current_outputs.elements()[0].toTensor().reshape({1, 18700}).to(torch::kCPU), 1);
 
-    // torch::Tensor filt = createFilter(current_game_state, g_game_setting);
+    auto filt = utility::createFilter(current_game_state, g_game_setting);
 
     // root node
     std::unique_ptr<UctNode> root_node(new UctNode());
     root_node->SetGameState(current_game_state);
-    root_node->SetEvaluatedResults(torch::rand({1, policy_weight * policy_width * policy_rotation}), current_outputs.index({0}).item<float>());
+    root_node->SetEvaluatedResults(torch::rand({1, policy_weight * policy_width * policy_rotation}), current_outputs[0]);
+    root_node->SetFilter(filt);
 
     int count = 0;
     auto now = std::chrono::system_clock::now();
@@ -330,12 +367,20 @@ dc::Move Skip::command(dc::GameState const& game_state)
     // auto b = std::chrono::system_clock::now();
     while ((now - start < limit)){
         // a = std::chrono::system_clock::now();
-        // while (queue_evaluate.size() < nBatchSize) {
-        #pragma omp parallel for
-        for (auto i = 0; i < nLoop; ++i) {
-            // std::cout << i << "  ";
-            search(root_node.get(), i);
-            if (std::accumulate(std::begin(flag_create_child), std::end(flag_create_child), 0) >= nBatchSize) continue;
+        if (current_game_state.shot + 1 == kShotPerEnd) {
+            if (count >= policy_rotation*policy_weight*policy_width) break;
+            #pragma omp parallel for
+            for (auto i = 0; i < nBatchSize; ++i) {
+                searchById(root_node.get(), i, count + i);
+            }
+        } else {
+            // while (queue_evaluate.size() < nBatchSize) {
+            #pragma omp parallel for
+            for (auto i = 0; i < nLoop; ++i) {
+                // std::cout << i << "  ";
+                search(root_node.get(), i);
+                if (std::accumulate(std::begin(flag_create_child), std::end(flag_create_child), 0) >= nBatchSize) continue;
+            }
         }
         // b = std::chrono::system_clock::now();
         // std::cout << "Search: " << std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count() << " msec" << "\n";
@@ -377,7 +422,6 @@ dc::Move Skip::command(dc::GameState const& game_state)
         // std::cout << "Update: " << std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count() << " msec" << "\n";
 
 
-        // updateNode();
         now = std::chrono::system_clock::now();
     }
     // GPUのキャッシュをクリア
@@ -389,12 +433,22 @@ dc::Move Skip::command(dc::GameState const& game_state)
     std::vector<int> child_indices = root_node->GetChildIndices();
     std::vector<float> values;
     for (auto index: child_indices) {
-        values.push_back(root_node->GetChild(index)->GetValue());
+        values.push_back(root_node->GetChild(index)->GetCountValue());
     }
+
+    // std::array<std::array<std::array<float, policy_width>, policy_weight>, policy_rotation> ;
+
+
 
     int pixel_id = child_indices[static_cast<int>(std::distance(values.begin(), std::max_element(values.begin(), values.end())))];
 
-    dc::moves::Shot shot = {utility::PixelToVelocity(pixel_id % (policy_weight * policy_width) / policy_width, pixel_id % (policy_weight * policy_width) % policy_width), dc::moves::Shot::Rotation::kCCW};
+    std::cout << pixel_id << ":   " << pixel_id / (policy_weight * policy_width) << ", " << pixel_id % (policy_weight * policy_width) / policy_width << ", " << pixel_id % (policy_weight * policy_width) % policy_width << std::endl;
+
+    dc::moves::Shot::Rotation rotation;
+    if (pixel_id / (policy_weight * policy_width) == 0) rotation = dc::moves::Shot::Rotation::kCW;
+    else rotation = dc::moves::Shot::Rotation::kCCW;
+
+    dc::moves::Shot shot = {utility::PixelToVelocity(pixel_id % (policy_weight * policy_width) / policy_width, pixel_id % (policy_weight * policy_width) % policy_width), rotation};
     dc::Move move = shot;
     return move;
 }

@@ -9,9 +9,9 @@
 namespace dc = digitalcurling3;
 
 const int nSimulation = 4; // 1つのショットに対する誤差を考慮したシミュレーション回数
-const int nBatchSize = 1000; // CNNで推論するときのバッチサイズ
-const int nLoop = 2000; // 
-const int nCandidate = 10000; // シミュレーションするショットの最大数。制限時間でシミュレーションできる数よりも十分大きく取る
+const int nBatchSize = 1024; // CNNで推論するときのバッチサイズ
+const int nLoop = 2048; // 
+// const int nCandidate = 10000; // シミュレーションするショットの最大数。制限時間でシミュレーションできる数よりも十分大きく取る
 
 class Skip
 {
@@ -21,17 +21,19 @@ class Skip
         void OnInit(dc::Team const, dc::GameSetting const&,     std::unique_ptr<dc::ISimulatorFactory>,     std::array<std::unique_ptr<dc::IPlayerFactory>, 4>, std::array<size_t, 4> & );
 
         float search(UctNode*, int);
+        void searchById(UctNode*, int, int);
 
         void updateNodes();
         void updateParent(UctNode*, float);
 
         void SimulateMove(UctNode*, int, int);
-        torch::Tensor EvaluateGameState(std::vector<dc::GameState>, dc::GameSetting);
+        std::vector<float> EvaluateGameState(std::vector<dc::GameState>, dc::GameSetting);
         void EvaluateQueue();
 
         dc::Move command(const dc::GameState&);
 
     private:
+        dc::Team team;
         torch::jit::script::Module module;
         dc::GameSetting g_game_setting;
         std::array<std::unique_ptr<dc::ISimulator>, nLoop> g_simulators;
