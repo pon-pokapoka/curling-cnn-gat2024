@@ -66,6 +66,7 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
         // Deserialize the ScriptModule from a file using torch::jit::load().
         std::cout << "model loading..." << std::endl;
         module = torch::jit::load("model/traced_curling_shotpyshot_v2_score-008.pt", device);
+        module.to(torch::kBFloat16);
         std::cout << "model loaded" << std::endl;
     }
     catch (const c10::Error& e) {
@@ -76,26 +77,26 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
     // 使うバッチサイズすべてで行っておく
     std::cout << "initial inference\n";
     for (auto i = 0; i < 10; ++i) {
-        std::cout << ".";
+        std::cout << "." << std::flush;
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(torch::rand({nBatchSize, 18, 64, 16}).to(device));
+        inputs.push_back(torch::rand({nBatchSize, 18, 64, 16}, torch::kBFloat16).to(device));
 
         // Execute the model and turn its output into a tensor.
         auto outputs = module.forward(inputs).toTensor();
         torch::Tensor out1 = outputs.to(torch::kCPU);
     }
-    std::cout << "\n";
+    std::cout << std::endl;
     for (auto i = 0; i < 10; ++i) {
-        std::cout << ".";
+        std::cout << "." << std::flush;
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(torch::rand({1, 18, 64, 16}).to(device));
+        inputs.push_back(torch::rand({1, 18, 64, 16}, torch::kBFloat16).to(device));
 
         // Execute the model and turn its output into a tensor.
         auto outputs = module.forward(inputs).toTensor();
         torch::Tensor out1 = outputs.to(torch::kCPU);
     }
     c10::cuda::CUDACachingAllocator::emptyCache();
-    std::cout << "\n";
+    std::cout << std::endl;
 
     // シミュレータFCV1Lightを使用する．
     g_game_setting = game_setting;
@@ -127,7 +128,7 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
     // しなくて良い
     std::cout << "initial simulation\n";
     for (auto j = 0; j < 10; ++j) {
-        std::cout << ".";
+        std::cout << "." << std::flush;
         dc::GameState dummy_game_state(g_game_setting);
         std::array<dc::GameState, nBatchSize> dummy_game_states; 
         std::array<dc::Move, nBatchSize> dummy_moves;
@@ -146,7 +147,7 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
                 dummy_player, dummy_game_states[i], dummy_moves[i], std::chrono::milliseconds(0));
         }
     }
-    std::cout << "\n";
+    std::cout << std::endl;
 
 
 }
@@ -238,19 +239,19 @@ torch::Tensor Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc
 {
     torch::NoGradGuard no_grad; 
    
-    auto start = std::chrono::system_clock::now();
-    auto now = std::chrono::system_clock::now();
+    // auto start = std::chrono::system_clock::now();
+    // auto now = std::chrono::system_clock::now();
 
     utility::ModelInput model_input = utility::GameStateToInput(game_states, game_setting, device);
-    now = std::chrono::system_clock::now();
-    std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+    // now = std::chrono::system_clock::now();
+    // std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
 
 
 
     auto outputs = module.forward(model_input.inputs).toTensor().to(torch::kCPU);
-    now = std::chrono::system_clock::now();
-    std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+    // now = std::chrono::system_clock::now();
+    // std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
 
     int size = static_cast<int>(game_states.size());
@@ -265,13 +266,13 @@ torch::Tensor Skip::EvaluateGameState(std::vector<dc::GameState> game_states, dc
             win_rate.index({n, i}) = win_table[scorediff_after_end+9][model_input.end[n]];
         }
     }
-    now = std::chrono::system_clock::now();
-    std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+    // now = std::chrono::system_clock::now();
+    // std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
 
     torch::Tensor win_prob = at::sum(F::softmax(outputs, 1) * win_rate, 1).to(torch::kCPU);
-    now = std::chrono::system_clock::now();
-    std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+    // now = std::chrono::system_clock::now();
+    // std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
 
     return win_prob;
@@ -325,7 +326,10 @@ dc::Move Skip::command(dc::GameState const& game_state)
 
     int count = 0;
     auto now = std::chrono::system_clock::now();
+    // auto a = std::chrono::system_clock::now();
+    // auto b = std::chrono::system_clock::now();
     while ((now - start < limit)){
+        // a = std::chrono::system_clock::now();
         // while (queue_evaluate.size() < nBatchSize) {
         #pragma omp parallel for
         for (auto i = 0; i < nLoop; ++i) {
@@ -333,9 +337,11 @@ dc::Move Skip::command(dc::GameState const& game_state)
             search(root_node.get(), i);
             if (std::accumulate(std::begin(flag_create_child), std::end(flag_create_child), 0) >= nBatchSize) continue;
         }
-        now = std::chrono::system_clock::now();
-        std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
+        // b = std::chrono::system_clock::now();
+        // std::cout << "Search: " << std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count() << " msec" << "\n";
         
+
+        // a = std::chrono::system_clock::now();
         for (auto i = 0; i < nLoop; ++i) {
             if (flag_create_child[i]) {
                 queue_create_child[i]->CreateChild(queue_create_child_index[i]);
@@ -345,6 +351,8 @@ dc::Move Skip::command(dc::GameState const& game_state)
                 }
             }
         }
+        // b = std::chrono::system_clock::now();
+        // std::cout << "Expand: " << std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count() << " msec" << "\n";
 
         // for (auto ptr : queue_create_child) {
         //     ptr.reset();
@@ -354,11 +362,19 @@ dc::Move Skip::command(dc::GameState const& game_state)
             flag_create_child[i] = false;
         }
 
+        // a = std::chrono::system_clock::now();
 
         count += queue_evaluate.size();
         EvaluateQueue();
+        // b = std::chrono::system_clock::now();
+        // std::cout << "Evaluate: " << std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count() << " msec" << "\n";
+
+        // a = std::chrono::system_clock::now();
+
         updateNodes();
         queue_evaluate.clear();
+        // b = std::chrono::system_clock::now();
+        // std::cout << "Update: " << std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count() << " msec" << "\n";
 
 
         // updateNode();
