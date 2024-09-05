@@ -9,8 +9,8 @@
 namespace dc = digitalcurling3;
 
 const int nSimulation = 4; // 1つのショットに対する誤差を考慮したシミュレーション回数
-const int nBatchSize = 1024; // CNNで推論するときのバッチサイズ
-const int nLoop = 2048; // 
+const int nBatchSize = 512; // CNNで推論するときのバッチサイズ
+const int nLoop = 8192; // 
 // const int nCandidate = 10000; // シミュレーションするショットの最大数。制限時間でシミュレーションできる数よりも十分大きく取る
 
 class Skip
@@ -43,6 +43,8 @@ class Skip
         std::vector<std::vector<double>> win_table;
         torch::Device device;
 
+        torch::ScalarType dtype;
+
         std::vector<UctNode*> queue_evaluate;
         std::vector<int> queue_simulate;
 
@@ -53,6 +55,8 @@ class Skip
         std::array<dc::GameState, nLoop> temp_game_states;
 
         int kShotPerEnd;
+
+        torch::Tensor filt;
 
 // torch::jit::script::Module module; // モデル
 

@@ -9,7 +9,7 @@ namespace dc = digitalcurling3;
 namespace utility
 {
 
-    double const dpi = 1/16;
+    double const dpi = 1/16.;
     double const ipd = 16;
     double const m_to_inch = 1/0.0254;
 
@@ -70,8 +70,14 @@ namespace utility
             }
     };
 
+
+    int Id4d1d(int i, int l, int n, int m)
+    {
+        return m + n*width + l*width*height + i*width*height*nChannel;
+    }
+
     // GameStateからモデルに入力する形式に変換する
-    ModelInput GameStateToInput(std::vector<dc::GameState> const game_states, dc::GameSetting game_setting, torch::Device device)
+    ModelInput GameStateToInput(std::vector<dc::GameState> const game_states, dc::GameSetting game_setting, torch::Device device, torch::ScalarType dtype)
     {
         // auto start = std::chrono::system_clock::now();
         // auto now = std::chrono::system_clock::now();
@@ -81,8 +87,8 @@ namespace utility
         int const size = static_cast<int>(game_states.size());
 
         // torch::Tensor sheet = torch::zeros({static_cast<int>(game_states.size()), nChannel, height, width}).to(device);
-        std::vector<std::array<std::array<std::array<float, width>, height>, nChannel>> sheet_array;
-        sheet_array.resize(size);
+        std::vector<float> sheet_array(width*height*nChannel*size, 0);
+        // sheet_array.resize(size);
         std::vector<int> end(size, 0);
         std::vector<int> score(size, 0);
         // torch::Tensor shot = torch::zeros({static_cast<int>(game_states.size()), 1}).to(device);
@@ -95,7 +101,7 @@ namespace utility
             if (game_states[i].end < game_setting.max_end){
                 end[i] = game_states[i].end;
             } else {
-                end[i] = 10; // エキストラエンドは10エンドと同じ
+                end[i] = 9; // エキストラエンドは10エンドと同じ
             }
             // std::cout << game_states[i].kShotPerEnd << std::endl;
             // now = std::chrono::system_clock::now();
@@ -105,21 +111,21 @@ namespace utility
             for (auto l=0; l <= game_states[i].shot; ++l){
                 for (auto n=0; n < height; ++n){
                     for (auto m=0; m < width; ++m){
-                        sheet_array[i][l+2][n][m] = 1;
+                        sheet_array[Id4d1d(i, l+2, n, m)] = 1.;
                     }
                 }  
             }
             for (auto l=game_states[i].shot+1; l < game_states[i].kShotPerEnd; ++l){
                 for (auto n=0; n < height; ++n){
                     for (auto m=0; m < width; ++m){
-                        sheet_array[i][l+2][n][m] = 0;
+                        sheet_array[Id4d1d(i, l+2, n, m)] = 0.;
                     }
                 }  
             }
             for (auto l=0; l < 2; ++l){
                 for (auto n=0; n < height; ++n){
                     for (auto m=0; m < width; ++m){
-                        sheet_array[i][l][n][m] = 0;
+                        sheet_array[Id4d1d(i, l, n, m)] = 0.;
                     }
                 }  
             }
@@ -132,7 +138,7 @@ namespace utility
                 if (stone) {
                     std::pair <int, int> pixel = PositionToPixel(stone->position);
                     // std::cout << pixel << std::endl;
-                    sheet_array[i][0][pixel.first][pixel.second] = 1;
+                    sheet_array[Id4d1d(i, 0, pixel.first, pixel.second)] = 1.;
                 }
             }
             for (size_t team_stone_idx = 0; team_stone_idx < game_states[i].kShotPerEnd / 2; ++team_stone_idx) {
@@ -140,16 +146,16 @@ namespace utility
                 if (stone) {
                     std::pair <int, int> pixel = PositionToPixel(stone->position);
                     // std::cout << pixel << std::endl;
-                    sheet_array[i][1][pixel.first][pixel.second] = 1;
+                    sheet_array[Id4d1d(i, 1, pixel.first, pixel.second)] = 1.;
                 }
             }
         }
-        torch::Tensor sheet = torch::from_blob(sheet_array.data(), {size, nChannel, height, width}, torch::kBFloat16);
+        torch::Tensor sheet = torch::from_blob(sheet_array.data(), {size, nChannel, height, width});
 
         // now = std::chrono::system_clock::now();
         // std::cout << "Input: " << std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() << " msec" << std::endl;
 
-        inputs.push_back(sheet.to(device));
+        inputs.push_back(sheet.to(dtype).to(device));
         // inputs.push_back(end);
         // inputs.push_back(score);
         // inputs.push_back(shot);
@@ -175,8 +181,8 @@ std::array<std::array<std::array<bool, policy_width>, policy_weight>, policy_rot
 
     for (auto i=0; i < policy_weight; ++i){
         for (auto j=0; j < policy_width; ++j){
-            if ((min_velocity <= i) && (i < policy_weight) && (j < 20)) filt[1][i][j] = 1;
-            if ((min_velocity <= i) && (i < policy_weight) && (j >= 12)) filt[0][i][j] = 1;
+            if ((min_velocity <= i) && (i < policy_weight) && (j < 14)) filt[1][i][j] = 1;
+            if ((min_velocity <= i) && (i < policy_weight) && (j >= 18)) filt[0][i][j] = 1;
 
             // if ((i < 37) && (j < 139)) filt.index({0, i, j}) = 0; // block siipdde guard
             // if ((i < 37) && (j >= 48)) filt.index({1, i, j}) = 0;
@@ -220,7 +226,39 @@ std::array<std::array<std::array<bool, policy_width>, policy_weight>, policy_rot
     return filt;
 }
 
+int Id3d1d(int i, int j, int k)
+{
+    return k + j*policy_width + i*policy_width*policy_weight;
+}
 
+
+std::array<bool, policy_width*policy_weight*policy_rotation> createFilter()
+{
+    std::array<bool, policy_width*policy_weight*policy_rotation> filt{{}};
+    // filt.fill({});
+
+    int min_velocity = 0;
+
+    for (auto i=0; i < policy_weight; ++i){
+        for (auto j=0; j < policy_width; ++j){
+            // if ((min_velocity <= i) && (i < policy_weight) && (j < 14)) filt[Id3d1d(1, i, j)] = true;
+            if (j < 14) filt[Id3d1d(1, i, j)] = true;
+            else filt[Id3d1d(1, i, j)] = false;
+            // if (/*(min_velocity <= i) && (i < policy_weight) && */(j >= 18)) filt[Id3d1d(0, i, j)] = true;
+            if (j >= 18) filt[Id3d1d(0, i, j)] = true;
+            else filt[Id3d1d(0, i, j)] = false;
+
+            if (i > 10) {
+                filt[Id3d1d(0, i, j)] = true;
+                filt[Id3d1d(1, i, j)] = true;
+            }
+
+            // if ((i < 37) && (j < 139)) filt.index({0, i, j}) = 0; // block siipdde guard
+            // if ((i < 37) && (j >= 48)) filt.index({1, i, j}) = 0;
+        }
+    }
+    return filt;
+}
 
     
 } // namespace utility

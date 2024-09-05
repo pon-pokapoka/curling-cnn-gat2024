@@ -46,6 +46,12 @@ UctNode* UctNode::GetChild(int index)
     return child_nodes_[it - child_move_indices_.begin()].get();
 }
 
+UctNode* UctNode::GetChildById(int index)
+{
+    return child_nodes_[index].get();
+}
+
+
 UctNode* UctNode::GetParent()
 {
     return parent_;

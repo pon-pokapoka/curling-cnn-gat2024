@@ -27,6 +27,7 @@ class UctNode
         // void    removeChild(Ptr);
 
         UctNode* GetChild(int);
+        UctNode* GetChildById(int);
         UctNode* GetParent();
 
         void SetGameState(dc::GameState);
