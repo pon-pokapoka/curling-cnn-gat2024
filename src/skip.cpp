@@ -121,7 +121,7 @@ void Skip::OnInit(dc::Team const g_team, dc::GameSetting const& game_setting, st
 
     // 考慮時間制限
     // ショット数で等分するが、超過分を考慮して0.8倍しておく
-    limit = g_game_setting.thinking_time[0] * 0.8 / (kShotPerEnd/2) / g_game_setting.max_end;
+    limit = g_game_setting.thinking_time[0] * 0.9 / (kShotPerEnd/2) / g_game_setting.max_end;
 
     // ショットシミュレーションの動作確認
     // しなくて良い

@@ -8,9 +8,9 @@
 
 namespace dc = digitalcurling3;
 
-const int nSimulation = 4; // 1つのショットに対する誤差を考慮したシミュレーション回数
-const int nBatchSize = 512; // CNNで推論するときのバッチサイズ
-const int nLoop = 8192; // 
+const int nSimulation = 10; // 1つのショットに対する誤差を考慮したシミュレーション回数
+const int nBatchSize = 1024; // CNNで推論するときのバッチサイズ
+const int nLoop = 2048; // 
 // const int nCandidate = 10000; // シミュレーションするショットの最大数。制限時間でシミュレーションできる数よりも十分大きく取る
 
 class Skip
