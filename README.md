@@ -1,2 +1,2 @@
-# curling-cnn-gat2023
-CNN based curling AI for GAT2023
+# curling-cnn-gat2024
+CNN based curling AI for GAT2024
